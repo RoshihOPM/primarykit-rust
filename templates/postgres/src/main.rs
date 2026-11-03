@@ -108,7 +108,10 @@ mod tests {
 
     #[tokio::test]
     async fn liveness_does_not_require_the_database() {
-        assert_eq!(get_status(app(lazy_pool()), "/health/live").await, StatusCode::OK);
+        assert_eq!(
+            get_status(app(lazy_pool()), "/health/live").await,
+            StatusCode::OK
+        );
     }
 
     #[tokio::test]

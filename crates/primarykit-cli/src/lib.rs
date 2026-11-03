@@ -191,13 +191,16 @@ mod tests {
     #[test]
     fn generates_a_standalone_postgres_project() {
         let root = TestDirectory::new();
-        let output = create_project_with_template("billing_api", &root.0, ProjectTemplate::Postgres)
-            .expect("generate postgres project");
+        let output =
+            create_project_with_template("billing_api", &root.0, ProjectTemplate::Postgres)
+                .expect("generate postgres project");
         let manifest = fs::read_to_string(output.join("Cargo.toml")).expect("manifest");
         assert!(manifest.contains("name = \"billing_api\""));
         assert!(manifest.contains("sqlx"));
         assert!(manifest.contains("[workspace]"));
-        assert!(output.join("migrations/20261103000000_create_examples.sql").is_file());
+        assert!(output
+            .join("migrations/20261103000000_create_examples.sql")
+            .is_file());
         assert!(output.join("compose.yaml").is_file());
     }
 
