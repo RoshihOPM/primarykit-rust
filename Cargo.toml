@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/primarykit-cli"]
+resolver = "2"
