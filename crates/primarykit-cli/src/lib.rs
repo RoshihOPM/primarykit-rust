@@ -24,6 +24,10 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../../../templates/basic/Dockerfile"),
     ),
     (
+        "AGENTS.md",
+        include_str!("../../../templates/shared/AGENTS.md"),
+    ),
+    (
         "README.md",
         include_str!("../../../templates/basic/README.md"),
     ),
@@ -61,6 +65,10 @@ const POSTGRES_TEMPLATES: &[(&str, &str)] = &[
     (
         "compose.yaml",
         include_str!("../../../templates/postgres/compose.yaml"),
+    ),
+    (
+        "AGENTS.md",
+        include_str!("../../../templates/shared/AGENTS.md"),
     ),
     (
         "README.md",
@@ -162,6 +170,7 @@ mod tests {
         assert!(output.join("src/main.rs").is_file());
         assert!(output.join("Dockerfile").is_file());
         assert!(output.join("README.md").is_file());
+        assert!(output.join("AGENTS.md").is_file());
     }
 
     #[test]
