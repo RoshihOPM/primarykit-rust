@@ -37,8 +37,8 @@ pub async fn has_permission(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::auth::{authenticate_session, create_session};
+    use super::*;
     use sqlx::postgres::PgPoolOptions;
     use std::time::{SystemTime, UNIX_EPOCH};
 

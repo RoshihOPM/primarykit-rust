@@ -325,7 +325,9 @@ mod tests {
         let outcomes = [first.expect("first"), second.expect("second")];
         assert_eq!(outcomes.iter().filter(|result| result.is_some()).count(), 1);
         assert_eq!(
-            authenticate_session(&pool, &token).await.expect("old token"),
+            authenticate_session(&pool, &token)
+                .await
+                .expect("old token"),
             None
         );
     }
