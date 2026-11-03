@@ -1,82 +1,124 @@
-# Agent instructions — PrimaryKit Rust
+# Engineering rules for AI agents
 
-These instructions apply to the entire repository. Read them before editing.
-The project's purpose is to **generate independent, maintainable Rust/Axum
-services**, not to build an opaque framework or a service tied to PrimaryKit.
+Applies to every change in this repository and to code copied from its templates.
+This file is the **source of truth** for coding-agent instructions.
+Read the relevant source, tests, workflow and docs **before** editing.
 
-## Priorities (in order)
+## Project contract
 
-1. Correctness and security, including existing data and user-written code.
-2. Backward compatibility of CLI commands and generated applications.
-3. Clarity, testability, and long-term maintenance.
-4. Predictable resource usage and performance, demonstrated by measurements.
-5. Convenience and brevity.
+- PrimaryKit is a **copy-based generator**, not a runtime framework.
+- Generated Axum projects must build, run and deploy **without** PrimaryKit installed.
+- Preserve existing behavior unless the task explicitly changes the contract.
+- Do not overwrite user-owned files. Validate filenames, destinations, symlinks,
+  dependencies and provenance **before** writing. Never execute untrusted scripts
+  as part of module installation.
+- Keep `basic` free of mandatory PostgreSQL; restrict SQLx modules to compatible templates.
+- Changes to the generator must be tested against a **freshly generated project**,
+  not only the CLI workspace.
+- Do not claim production readiness while authentication, authorization, migration
+  strategy, or security review is incomplete.
 
-## Engineering principles
+## Clean code: SOLID, KISS, DRY, YAGNI
 
-- **SOLID, pragmatically:** one responsibility per module; separate I/O, domain
-  decisions, persistence and transport; depend on narrow, explicit contracts.
-  Introduce traits for meaningful substitutions or tests, **not** an interface
-  for every struct. Prefer composition over inheritance-like abstractions.
-- **KISS:** choose the smallest explicit design that satisfies the requirement.
-  Prefer familiar Rust/std/Tokio/SQLx patterns to custom runtimes or frameworks.
-- **DRY:** deduplicate stable domain rules and invariants, **not** every similar
-  line. A little repetition is preferable to premature generic abstractions.
-- **YAGNI:** do not add future-oriented layers, configuration, macros or
-  dependencies without a concrete current use case.
-- **Clean Code:** descriptive names, cohesive short functions, explicit inputs,
-  no surprising side effects, consistent error boundaries. Comments should
-  explain intent and trade-offs rather than narrate obvious code.
+Apply these as **decision tools**, not as quotas for abstractions.
 
-## Rust and async rules
+- **S — Single responsibility:** a module/function should have one clear reason
+  to change. Separate parsing, business decisions, persistence and HTTP adapters
+  where this improves clarity; do not create a layer for every function.
+- **O — Open/closed:** introduce extension points for a demonstrated second
+  implementation or variation, not hypothetical future requirements.
+- **L — Liskov substitution:** implementations of the same trait must preserve
+  documented invariants, failure behavior and authorization contracts.
+- **I — Interface segregation:** keep traits small and consumer-focused. Avoid
+  large service traits and broad public exports.
+- **D — Dependency inversion:** depend on narrowly defined contracts at
+  domain/infrastructure boundaries **when** this improves testability or
+  substitution. Do not blanket every struct with traits or DI containers.
+- **KISS:** prefer obvious control flow, explicit types, small modules and
+  existing stable Rust crates. No custom ORM, async runtime or home-grown
+  dependency-injection framework.
+- **DRY:** centralize repeated *business rules and sources of truth*; duplicating
+  a tiny implementation can be better than coupling unrelated modules.
+- **YAGNI:** implement only the requested behavior. Avoid speculative
+  configuration switches, generic repositories, feature flags and indirection.
+- Favor meaningful names, cohesive functions, guard clauses, explicit failure
+  cases and simple data flow. Comments explain **why**, not restate **what**.
+- Avoid hard-coded production credentials, hidden side effects, magical
+  defaults, global mutable state and unnecessary dependencies.
+- Do not refactor unrelated code in feature PRs. If the smallest safe change
+  still introduces complexity, document the trade-off.
 
-- Prefer safe Rust; `unsafe` requires documented invariants and human review.
-- Do not suppress errors with `unwrap`, `expect`, broad catches, or ignored
-  results in request paths. Test-only `expect` is acceptable.
-- Prefer typed errors and `Result`; do not leak secrets or internal SQL errors
-  in public HTTP responses. Use structured, redacted `tracing`.
-- Never hold a std::sync mutex guard or a database transaction across
-  unrelated `.await` operations. Avoid blocking work on Tokio worker threads.
-- Apply explicit timeouts, connection-pool bounds and graceful shutdown for
-  externally dependent services; benchmark before tuning.
-- Keep generated code idiomatic and compilable without the generator installed.
+## Rust and asynchronous execution
 
-## Generator, module and database constraints
+- Prefer safe Rust; any `unsafe` requires an isolated, documented invariant
+  and explicit security review.
+- Do not use `unwrap()`/`expect()` on request, worker or network paths.
+  Test setup may use them when a failure is intentionally fatal.
+- Use typed errors and map internal failures to **non-sensitive** public HTTP
+  responses. Log operational context with `tracing`, never secrets or tokens.
+- Use Tokio async I/O; offload blocking/CPU-heavy operations rather than
+  blocking executor threads. Bound concurrency, timeouts, retries and queues.
+- Limit memory growth: avoid unbounded buffering, spawning, caches and
+  connection pools. Support graceful shutdown and cancellation.
+- Prefer explicit validated configuration. Separate liveness from readiness:
+  readiness should fail closed on required dependency failure.
+- Verify object ownership, transaction lifetimes, cancellation and rollback
+  behavior instead of merely silencing borrow-checker errors with `Arc`/`Mutex`.
 
-- `primarykit new` must not overwrite existing directories.
-- `primarykit add` must refuse unknown/incompatible modules, path traversal,
-  symlink redirection and collisions with user files. Preserve user-written
-  code outside clearly marked managed regions.
-- Modules must be independent, have explicit dependencies, and not secretly
-  register HTTP routes, launch tasks or run database migrations.
-- Do not edit already-applied SQL migrations. Add new versioned migrations.
-- Keep business changes and audit/outbox writes in the same transaction when
-  they must succeed atomically. Define the isolation and locking strategy for
-  concurrent mutations; demonstrate idempotency where relevant.
-- Assume all request data, external file contents and connector outputs are
-  untrusted. Validate at boundaries; use parameterized SQL.
-- Never commit credentials, access tokens or real customer data.
+## PostgreSQL, data integrity and security
 
-## Work and review process
+- Parameterize SQL and validate untrusted input. Never interpolate user data
+  into SQL identifiers or statements without strict allow-list validation.
+- Keep multi-step business changes and their audit records in **one** transaction.
+  Design for retries, idempotency and concurrent updates, not only happy paths.
+- Version and commit migrations; use expand/contract for breaking schema
+  changes and explicitly assess locks, indexes, backfills and rollback plans.
+- Review query plans and indexes for endpoints that read growing datasets.
+  Pagination must have deterministic ordering and bounded limits.
+- Enforce least privilege and deny-by-default permissions. Authentication is
+  **not** authorization; check object/tenant ownership on every sensitive path.
+- Use reputable password hashing/key management and constant-time comparisons
+  where appropriate. Never store tokens, passwords or API keys in plaintext.
+- Set safe defaults for file uploads, deserialization, webhook signatures,
+  replay windows, rate limits and request body limits when those features exist.
 
-1. Inspect current code, tests, contracts and relevant docs before editing.
-2. Implement the smallest coherent change, including failure cases and tests.
-3. Verify the **generator and a generated project**; for PostgreSQL modules
-   verify against real PostgreSQL in CI, not only mocks.
+## Module catalog and generation
+
+- Modules are portable, opt-in and independently testable; prefer minimal
+  dependencies and avoid coupling to CLI internals.
+- Declare dependencies, compatibility and generated files explicitly.
+- Treat provenance as metadata, **not** a cryptographic guarantee.
+- Reject existing targets rather than overwriting. Verify that generated Rust
+  modules are registered and compile in both supported templates as applicable.
+- Document runtime and database side effects, permissions and migrations.
+- Prefer idempotent behavior where possible; document operations that are not
+  crash-atomic. Avoid claiming transactionality across filesystem writes.
+
+## Testing and pull-request workflow
+
+1. Inspect existing patterns, history, the issue/PR and relevant CI checks.
+2. Plan the smallest coherent change; specify invariants and failure modes.
+3. Add focused unit tests plus integration/regression tests for the affected
+   contract, including invalid inputs and concurrent/transactional behavior.
 4. Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
    --all-features -- -D warnings`, `cargo test --workspace --all-features`
-   and build checks. For generated projects, run their own commands too.
-5. Add a regression test for every bug fix. Document behavior, limitations and
-   migration or rollout steps for any public change.
-6. Use feature branch -> PR -> green CI -> `dev`; promote to protected `main`
-   only after separate successful release verification. Never force push or
-   claim checks passed without inspecting their results.
+   and `cargo build --workspace --release`.
+5. **Also** generate a fresh `basic` or `postgres` app as appropriate,
+   install affected modules, then run its fmt, Clippy, tests and build. Test
+   PostgreSQL-specific behavior against real PostgreSQL in CI.
+6. Open a focused feature PR targeting `dev`. Merge only after required checks
+   succeed; promote tested code from `dev` to protected `main` through a PR.
+   Do not bypass protections, force-push protected branches or rewrite history.
+7. Report precisely what was changed, what actually ran, and what remains
+   untested. A passing compiler alone does not prove correctness.
 
-## Definition of done
+## Reviews and agent collaboration
 
-- Compatible CLI behavior and no silent mutation of user code.
-- Security and failure paths tested; generated service compiles and tests.
-- Lint, format, unit and relevant integration checks green in GitHub Actions.
-- README and module documentation accurate, including limitations.
-- No speculative abstractions, unchecked dependencies or unfinished stubs
-  advertised as production-ready.
+- Check: correctness, behavior regressions, tenant/data isolation,
+  authorization, SQL transactionality, memory bounds, failure recovery and
+  observable errors before aesthetics.
+- Treat code produced by other agents as untrusted until reviewed and tested.
+- If another PR or agent owns a file, avoid overlapping edits and re-check
+  branch heads immediately before pushing. Never silently discard others' work.
+- When requirements conflict, prefer safety, backwards compatibility and
+  explicit documentation over speculative cleverness.

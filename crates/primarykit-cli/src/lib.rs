@@ -33,7 +33,7 @@ const TEMPLATES: &[(&str, &str)] = &[
     ),
     (
         "AGENTS.md",
-        include_str!("../../../docs/generated-agent-rules.md"),
+        include_str!("../../../templates/shared/AGENTS.md"),
     ),
 ];
 
@@ -76,7 +76,7 @@ const POSTGRES_TEMPLATES: &[(&str, &str)] = &[
     ),
     (
         "AGENTS.md",
-        include_str!("../../../docs/generated-agent-rules.md"),
+        include_str!("../../../templates/shared/AGENTS.md"),
     ),
 ];
 

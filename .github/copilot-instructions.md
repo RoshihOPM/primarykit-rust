@@ -1,12 +1,8 @@
-# GitHub Copilot repository instructions
+# GitHub Copilot instructions
 
-Read and follow [AGENTS.md](../AGENTS.md) before generating or modifying code.
+Follow [the repository engineering policy](../AGENTS.md) for every change.
+It defines SOLID, KISS, DRY, YAGNI, safe Rust, SQL integrity, modular
+architecture, security, CI and branch/PR requirements.
 
-In brief: prefer SOLID (only useful interfaces), KISS, pragmatic DRY, YAGNI
-and Clean Code. Preserve existing user code and migrations. Use safe Rust,
-typed errors, parameterized SQL, bounded Tokio concurrency, explicit auth
-and tests. Always test both PrimaryKit's CLI **and its generated projects**;
-do not merge failed CI or claim unverified checks succeeded.
-
-Generated applications receive their own AGENTS.md from
-`docs/generated-agent-rules.md`.
+Generated projects are independent from PrimaryKit: test the generated
+application and affected portable modules, not only the generator.
