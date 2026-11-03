@@ -72,7 +72,9 @@ mod tests {
     #[test]
     fn exposes_expected_http_status() {
         assert_eq!(
-            ApiError::bad_request("invalid page").into_response().status(),
+            ApiError::bad_request("invalid page")
+                .into_response()
+                .status(),
             StatusCode::BAD_REQUEST
         );
     }
