@@ -13,3 +13,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+# Explicitly opt out of an enclosing workspace when generated inside a monorepo.
+[workspace]

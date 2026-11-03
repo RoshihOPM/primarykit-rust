@@ -3,12 +3,30 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 const TEMPLATES: &[(&str, &str)] = &[
-    ("Cargo.toml", include_str!("../../../templates/basic/Cargo.toml")),
-    ("src/main.rs", include_str!("../../../templates/basic/src/main.rs")),
-    (".gitignore", include_str!("../../../templates/basic/.gitignore")),
-    (".dockerignore", include_str!("../../../templates/basic/.dockerignore")),
-    ("Dockerfile", include_str!("../../../templates/basic/Dockerfile")),
-    ("README.md", include_str!("../../../templates/basic/README.md")),
+    (
+        "Cargo.toml",
+        include_str!("../../../templates/basic/Cargo.toml"),
+    ),
+    (
+        "src/main.rs",
+        include_str!("../../../templates/basic/src/main.rs"),
+    ),
+    (
+        ".gitignore",
+        include_str!("../../../templates/basic/.gitignore"),
+    ),
+    (
+        ".dockerignore",
+        include_str!("../../../templates/basic/.dockerignore"),
+    ),
+    (
+        "Dockerfile",
+        include_str!("../../../templates/basic/Dockerfile"),
+    ),
+    (
+        "README.md",
+        include_str!("../../../templates/basic/README.md"),
+    ),
 ];
 
 /// Generate an independent project. Files are embedded into the CLI at build time.
@@ -82,6 +100,7 @@ mod tests {
         let manifest = fs::read_to_string(output.join("Cargo.toml")).expect("manifest");
         assert!(manifest.contains("name = \"inventory_api\""));
         assert!(manifest.contains("axum"));
+        assert!(manifest.contains("[workspace]"));
         assert!(output.join("src/main.rs").is_file());
         assert!(output.join("Dockerfile").is_file());
         assert!(output.join("README.md").is_file());
@@ -92,7 +111,10 @@ mod tests {
         let root = TestDirectory::new();
         for name in ["../escape", "bad-name", "Upper", "_prefix", ""] {
             let result = create_project(name, &root.0);
-            assert_eq!(result.expect_err("must fail").kind(), io::ErrorKind::InvalidInput);
+            assert_eq!(
+                result.expect_err("must fail").kind(),
+                io::ErrorKind::InvalidInput
+            );
         }
     }
 

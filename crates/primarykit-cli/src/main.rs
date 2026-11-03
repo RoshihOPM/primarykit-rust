@@ -4,7 +4,8 @@ use std::process;
 
 use primarykit::create_project;
 
-const USAGE: &str = "Usage:\n  primarykit new <project_name> [--output <directory>]\n  primarykit --help";
+const USAGE: &str =
+    "Usage:\n  primarykit new <project_name> [--output <directory>]\n  primarykit --help";
 
 fn main() {
     if let Err(error) = run() {
