@@ -1,0 +1,29 @@
+# Development only: replace credentials and database configuration in production.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: primarykit
+      POSTGRES_PASSWORD: primarykit_dev_only
+      POSTGRES_DB: primarykit
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U primarykit -d primarykit"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgres://primarykit:primarykit_dev_only@postgres:5432/primarykit
+      RUST_LOG: info
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
