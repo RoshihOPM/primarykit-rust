@@ -258,12 +258,16 @@ mod tests {
 
     #[tokio::test]
     async fn session_lifecycle_revocation_and_inactive_users() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let user_id = test_user(&pool).await;
         let token = create_session(&pool, user_id, 60).await.expect("session");
         assert_eq!(token.len(), 64);
         assert_eq!(
-            authenticate_session(&pool, &token).await.expect("authenticate"),
+            authenticate_session(&pool, &token)
+                .await
+                .expect("authenticate"),
             Some(AuthenticatedUser { user_id })
         );
         let stored: String =
@@ -276,7 +280,9 @@ mod tests {
         assert!(revoke_session(&pool, &token).await.expect("revoke"));
         assert!(!revoke_session(&pool, &token).await.expect("idempotent"));
         assert_eq!(
-            authenticate_session(&pool, &token).await.expect("after revoke"),
+            authenticate_session(&pool, &token)
+                .await
+                .expect("after revoke"),
             None
         );
 
@@ -300,7 +306,9 @@ mod tests {
 
     #[tokio::test]
     async fn rotation_is_atomic_and_expired_tokens_are_denied() {
-        let Some(pool) = test_pool().await else { return };
+        let Some(pool) = test_pool().await else {
+            return;
+        };
         let user_id = test_user(&pool).await;
         let old = create_session(&pool, user_id, 60).await.expect("session");
         let next = rotate_session(&pool, &old, 120)
@@ -312,14 +320,20 @@ mod tests {
             .expect("old revoked")
             .is_none());
         assert_eq!(authenticate_session(&pool, &old).await.expect("old"), None);
-        assert!(authenticate_session(&pool, &next).await.expect("new").is_some());
+        assert!(authenticate_session(&pool, &next)
+            .await
+            .expect("new")
+            .is_some());
 
-        sqlx::query("UPDATE auth_sessions SET expires_at = clock_timestamp() - INTERVAL '1 second' WHERE token_hash = $1")
+        sqlx::query("UPDATE auth_sessions SET created_at = clock_timestamp() - INTERVAL '2 seconds', expires_at = clock_timestamp() - INTERVAL '1 second' WHERE token_hash = $1")
             .bind(token_hash(&next))
             .execute(&pool)
             .await
             .expect("expire session");
-        assert_eq!(authenticate_session(&pool, &next).await.expect("expired"), None);
+        assert_eq!(
+            authenticate_session(&pool, &next).await.expect("expired"),
+            None
+        );
         assert!(rotate_session(&pool, &next, 60)
             .await
             .expect("cannot rotate expired token")

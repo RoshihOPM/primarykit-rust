@@ -431,7 +431,10 @@ mod tests {
             fs::create_dir_all(path.join("src/modules")).expect("create test project");
             fs::write(
                 path.join("Cargo.toml"),
-                format!("[package]\nname=\"test\"\n[dependencies]\n{}", managed_dependencies(&[])),
+                format!(
+                    "[package]\nname=\"test\"\n[dependencies]\n{}",
+                    managed_dependencies(&[])
+                ),
             )
             .expect("manifest");
             fs::write(path.join("src/lib.rs"), "pub mod modules;\n").expect("library");

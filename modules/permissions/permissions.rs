@@ -58,7 +58,10 @@ mod tests {
         let user_id: i64 = sqlx::query_scalar(
             "INSERT INTO auth_users(email, password_hash) VALUES ($1, $2) RETURNING id",
         )
-        .bind(format!("rbac-{nanos}-{}@example.invalid", std::process::id()))
+        .bind(format!(
+            "rbac-{nanos}-{}@example.invalid",
+            std::process::id()
+        ))
         .bind("test-only-placeholder-hash")
         .fetch_one(&pool)
         .await
