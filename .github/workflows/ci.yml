@@ -51,3 +51,47 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           cargo test
           cargo build --release
+
+  postgres-template:
+    name: Generate, migrate and test PostgreSQL template
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: primarykit
+          POSTGRES_PASSWORD: primarykit_dev_only
+          POSTGRES_DB: primarykit_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U primarykit -d primarykit_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://primarykit:primarykit_dev_only@127.0.0.1:5432/primarykit_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Create and test an independent PostgreSQL application
+        shell: bash
+        run: |
+          cargo run -p primarykit -- new db_api --template postgres --output "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/db_api"
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+          cargo build --release
