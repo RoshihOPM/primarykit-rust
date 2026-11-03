@@ -40,15 +40,9 @@ mod tests {
             .expect("test database connection");
         sqlx::migrate!().run(&pool).await.expect("migrations");
         let mut tx = pool.begin().await.expect("transaction");
-        record(
-            &mut tx,
-            Some("test-user"),
-            "read",
-            "test_resource",
-            "one",
-        )
-        .await
-        .expect("record audit event");
+        record(&mut tx, Some("test-user"), "read", "test_resource", "one")
+            .await
+            .expect("record audit event");
 
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)::BIGINT FROM audit_events WHERE resource_type = 'test_resource'",
