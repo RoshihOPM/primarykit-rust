@@ -9,6 +9,10 @@ has no runtime dependency on the generator.
     cd inventory_api
     cargo run
 
+For a PostgreSQL-enabled service instead:
+
+    cargo run -p primarykit -- new inventory_api --template postgres
+
 The command creates inventory_api in the current directory. Use
 --output <directory> to select a parent directory. Existing directories
 are never overwritten.
@@ -28,7 +32,8 @@ graceful shutdown, and a non-root Docker runtime.
 
 ## Project status
 
-Initial bootstrap (v0.1.0). PostgreSQL, SQLx migrations, authentication,
+Early bootstrap. The optional postgres template includes PostgreSQL, SQLx
+migrations, and database readiness. Authentication,
 audit history, API keys, queues, module registry, and security checks are
 planned but are NOT implemented yet.
 

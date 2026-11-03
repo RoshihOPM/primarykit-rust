@@ -29,8 +29,62 @@ const TEMPLATES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Generate an independent project. Files are embedded into the CLI at build time.
+const POSTGRES_TEMPLATES: &[(&str, &str)] = &[
+    (
+        "Cargo.toml",
+        include_str!("../../../templates/postgres/Cargo.toml"),
+    ),
+    (
+        "src/main.rs",
+        include_str!("../../../templates/postgres/src/main.rs"),
+    ),
+    (
+        "migrations/20261103000000_create_examples.sql",
+        include_str!("../../../templates/postgres/migrations/20261103000000_create_examples.sql"),
+    ),
+    (
+        ".env.example",
+        include_str!("../../../templates/postgres/.env.example"),
+    ),
+    (
+        ".gitignore",
+        include_str!("../../../templates/basic/.gitignore"),
+    ),
+    (
+        ".dockerignore",
+        include_str!("../../../templates/basic/.dockerignore"),
+    ),
+    (
+        "Dockerfile",
+        include_str!("../../../templates/postgres/Dockerfile"),
+    ),
+    (
+        "compose.yaml",
+        include_str!("../../../templates/postgres/compose.yaml"),
+    ),
+    (
+        "README.md",
+        include_str!("../../../templates/postgres/README.md"),
+    ),
+];
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ProjectTemplate {
+    Basic,
+    Postgres,
+}
+
+/// Generate an independent basic project.
 pub fn create_project(name: &str, output_root: &Path) -> io::Result<PathBuf> {
+    create_project_with_template(name, output_root, ProjectTemplate::Basic)
+}
+
+/// Generate an independent project. Files are embedded into the CLI at build time.
+pub fn create_project_with_template(
+    name: &str,
+    output_root: &Path,
+    template: ProjectTemplate,
+) -> io::Result<PathBuf> {
     if !valid_project_name(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -43,7 +97,11 @@ pub fn create_project(name: &str, output_root: &Path) -> io::Result<PathBuf> {
     // A pre-existing project must never be modified or overwritten.
     fs::create_dir(&destination)?;
 
-    for (relative_path, source) in TEMPLATES {
+    let files = match template {
+        ProjectTemplate::Basic => TEMPLATES,
+        ProjectTemplate::Postgres => POSTGRES_TEMPLATES,
+    };
+    for (relative_path, source) in files {
         let target = destination.join(relative_path);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
@@ -128,6 +186,22 @@ mod tests {
         let error = create_project("orders", &root.0).expect_err("must not overwrite");
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(marker).expect("marker"), "keep");
+    }
+
+    #[test]
+    fn generates_a_standalone_postgres_project() {
+        let root = TestDirectory::new();
+        let output =
+            create_project_with_template("billing_api", &root.0, ProjectTemplate::Postgres)
+                .expect("generate postgres project");
+        let manifest = fs::read_to_string(output.join("Cargo.toml")).expect("manifest");
+        assert!(manifest.contains("name = \"billing_api\""));
+        assert!(manifest.contains("sqlx"));
+        assert!(manifest.contains("[workspace]"));
+        assert!(output
+            .join("migrations/20261103000000_create_examples.sql")
+            .is_file());
+        assert!(output.join("compose.yaml").is_file());
     }
 
     #[test]
