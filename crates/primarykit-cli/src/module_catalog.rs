@@ -463,8 +463,11 @@ mod tests {
 
         fs::remove_file(project.0.join("src/modules/mod.rs")).expect("remove registry");
         fs::remove_dir(project.0.join("src/modules")).expect("remove directory");
-        symlink(external.0.join("src/modules"), project.0.join("src/modules"))
-            .expect("symlink");
+        symlink(
+            external.0.join("src/modules"),
+            project.0.join("src/modules"),
+        )
+        .expect("symlink");
 
         assert!(install_module(&project.0, "api_errors").is_err());
         assert!(!external.0.join("src/modules/api_errors.rs").exists());
