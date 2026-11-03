@@ -43,3 +43,10 @@ planned but are NOT implemented yet.
 - Fail closed on invalid project names, and never overwrite a target project.
 - Prefer small, independently tested modules over a custom framework.
 - Use CI and integration tests before claiming production readiness.
+
+## Contributing with AI agents
+
+Coding agents must follow [AGENTS.md](AGENTS.md): SOLID, KISS, DRY and YAGNI
+are practical guidelines, together with explicit Rust, security, PostgreSQL
+and CI requirements. The same policy is linked from Claude and Copilot
+instructions. Every change must pass tests on the generated project.
