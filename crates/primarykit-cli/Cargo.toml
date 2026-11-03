@@ -1,0 +1,14 @@
+[package]
+name = "primarykit"
+version = "0.1.0"
+edition = "2021"
+description = "Copy-based generator for independent Rust/Axum services"
+publish = false
+
+[[bin]]
+name = "primarykit"
+path = "src/main.rs"
+
+[lib]
+name = "primarykit"
+path = "src/lib.rs"
