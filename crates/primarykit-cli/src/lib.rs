@@ -31,6 +31,10 @@ const TEMPLATES: &[(&str, &str)] = &[
         "README.md",
         include_str!("../../../templates/basic/README.md"),
     ),
+    (
+        "AGENTS.md",
+        include_str!("../../../docs/generated-agent-rules.md"),
+    ),
 ];
 
 const POSTGRES_TEMPLATES: &[(&str, &str)] = &[
@@ -69,6 +73,10 @@ const POSTGRES_TEMPLATES: &[(&str, &str)] = &[
     (
         "README.md",
         include_str!("../../../templates/postgres/README.md"),
+    ),
+    (
+        "AGENTS.md",
+        include_str!("../../../docs/generated-agent-rules.md"),
     ),
 ];
 
@@ -181,6 +189,7 @@ mod tests {
         assert!(output.join("src/main.rs").is_file());
         assert!(output.join("Dockerfile").is_file());
         assert!(output.join("README.md").is_file());
+        assert!(output.join("AGENTS.md").is_file());
         assert!(output.join("src/lib.rs").is_file());
         assert!(output.join("src/modules/mod.rs").is_file());
         assert!(output.join("primarykit-origin.json").is_file());
@@ -224,6 +233,7 @@ mod tests {
             .join("migrations/20261103000000_create_examples.sql")
             .is_file());
         assert!(output.join("compose.yaml").is_file());
+        assert!(output.join("AGENTS.md").is_file());
         assert!(output.join("primarykit-origin.json").is_file());
     }
 

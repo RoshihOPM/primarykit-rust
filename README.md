@@ -63,3 +63,10 @@ API keys, queues and comprehensive security checks are NOT implemented yet.
 - Fail closed on invalid project names, and never overwrite a target project.
 - Prefer small, independently tested modules over a custom framework.
 - Use CI and integration tests before claiming production readiness.
+
+## AI agent development guidelines
+
+See [AGENTS.md](AGENTS.md) for the required agent workflow and
+SOLID/KISS/DRY/YAGNI/Clean Code principles tailored to Rust.
+Every generated app includes its own AGENTS.md so these rules remain
+available when the generator is no longer installed.
