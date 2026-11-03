@@ -19,6 +19,26 @@ are never overwritten.
 
 Try GET /health/live or GET /health/ready on port 8000.
 
+## Portable modules
+
+PrimaryKit keeps the generated service independent from the generator.
+
+    cargo run -p primarykit -- modules
+    cargo run -p primarykit -- add pagination --project ./inventory_api
+    cargo run -p primarykit -- add audit --project ./inventory_api
+
+The second command installs both pagination and its api_errors dependency.
+The audit module requires a project created with --template postgres.
+To run the PostgreSQL audit migration, execute the service's usual migration
+workflow. Dependencies are resolved automatically, existing files are never
+overwritten, and the generator tracks installed modules in primarykit-origin.json.
+
+Modules are compiled as public library exports (src/modules). They are not
+implicitly attached to HTTP routes: use the exports explicitly from your
+business handlers. In particular, audit.record must be called using the
+same SQLx transaction as the audited business operation. For details, see
+[Module documentation](docs/modules.md).
+
 ## Development
 
     cargo fmt --all -- --check
@@ -33,9 +53,9 @@ graceful shutdown, and a non-root Docker runtime.
 ## Project status
 
 Early bootstrap. The optional postgres template includes PostgreSQL, SQLx
-migrations, and database readiness. Authentication,
-audit history, API keys, queues, module registry, and security checks are
-planned but are NOT implemented yet.
+migrations, and database readiness. The initial module catalog includes api_errors,
+pagination and transaction-scoped audit events. Authentication, permissions,
+API keys, queues and comprehensive security checks are NOT implemented yet.
 
 ## Design principles
 
