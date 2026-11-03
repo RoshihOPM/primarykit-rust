@@ -1,3 +1,7 @@
+mod module_catalog;
+
+pub use module_catalog::{available_modules, install_module, ModuleInfo};
+
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -24,12 +28,12 @@ const TEMPLATES: &[(&str, &str)] = &[
         include_str!("../../../templates/basic/Dockerfile"),
     ),
     (
-        "AGENTS.md",
-        include_str!("../../../templates/shared/AGENTS.md"),
-    ),
-    (
         "README.md",
         include_str!("../../../templates/basic/README.md"),
+    ),
+    (
+        "AGENTS.md",
+        include_str!("../../../templates/shared/AGENTS.md"),
     ),
 ];
 
@@ -67,12 +71,12 @@ const POSTGRES_TEMPLATES: &[(&str, &str)] = &[
         include_str!("../../../templates/postgres/compose.yaml"),
     ),
     (
-        "AGENTS.md",
-        include_str!("../../../templates/shared/AGENTS.md"),
-    ),
-    (
         "README.md",
         include_str!("../../../templates/postgres/README.md"),
+    ),
+    (
+        "AGENTS.md",
+        include_str!("../../../templates/shared/AGENTS.md"),
     ),
 ];
 
@@ -116,6 +120,21 @@ pub fn create_project_with_template(
         }
         fs::write(target, source.replace("{{project_name}}", name))?;
     }
+
+    fs::write(destination.join("src/lib.rs"), "pub mod modules;\n")?;
+    fs::create_dir_all(destination.join("src/modules"))?;
+    fs::write(
+        destination.join("src/modules/mod.rs"),
+        module_catalog::initial_modules_source(),
+    )?;
+    let template_name = match template {
+        ProjectTemplate::Basic => "basic",
+        ProjectTemplate::Postgres => "postgres",
+    };
+    fs::write(
+        destination.join("primarykit-origin.json"),
+        module_catalog::origin_json(template_name)?,
+    )?;
 
     Ok(destination)
 }
@@ -171,6 +190,9 @@ mod tests {
         assert!(output.join("Dockerfile").is_file());
         assert!(output.join("README.md").is_file());
         assert!(output.join("AGENTS.md").is_file());
+        assert!(output.join("src/lib.rs").is_file());
+        assert!(output.join("src/modules/mod.rs").is_file());
+        assert!(output.join("primarykit-origin.json").is_file());
     }
 
     #[test]
@@ -211,6 +233,8 @@ mod tests {
             .join("migrations/20261103000000_create_examples.sql")
             .is_file());
         assert!(output.join("compose.yaml").is_file());
+        assert!(output.join("AGENTS.md").is_file());
+        assert!(output.join("primarykit-origin.json").is_file());
     }
 
     #[test]
