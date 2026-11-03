@@ -36,7 +36,14 @@ pub enum AuthError {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AuthenticatedUser {
-    pub user_id: i64,
+    user_id: i64,
+}
+
+impl AuthenticatedUser {
+    /// Validated identity returned only by authenticate_session.
+    pub const fn user_id(self) -> i64 {
+        self.user_id
+    }
 }
 
 /// CPU- and memory-intensive. Do not execute directly on Tokio executor threads.
@@ -302,6 +309,25 @@ mod tests {
             create_session(&pool, user_id, 60).await,
             Err(AuthError::InactiveUser)
         ));
+    }
+
+    #[tokio::test]
+    async fn concurrent_rotations_serialize_and_only_one_succeeds() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let user_id = test_user(&pool).await;
+        let token = create_session(&pool, user_id, 60).await.expect("session");
+        let (first, second) = tokio::join!(
+            rotate_session(&pool, &token, 120),
+            rotate_session(&pool, &token, 120)
+        );
+        let outcomes = [first.expect("first"), second.expect("second")];
+        assert_eq!(outcomes.iter().filter(|result| result.is_some()).count(), 1);
+        assert_eq!(
+            authenticate_session(&pool, &token).await.expect("old token"),
+            None
+        );
     }
 
     #[tokio::test]

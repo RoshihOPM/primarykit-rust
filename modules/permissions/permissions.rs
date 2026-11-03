@@ -5,16 +5,17 @@
 //! alone does NOT enforce object-level ownership: filter business SQL by
 //! tenant and resource ID in the same operation.
 
+use super::auth::AuthenticatedUser;
 use sqlx::PgPool;
 
 /// Database failures propagate and MUST NOT be treated as permission grants.
 pub async fn has_permission(
     pool: &PgPool,
-    user_id: i64,
+    principal: AuthenticatedUser,
     tenant_id: &str,
     permission: &str,
 ) -> Result<bool, sqlx::Error> {
-    if user_id <= 0 || tenant_id.is_empty() || permission.is_empty() {
+    if tenant_id.is_empty() || permission.is_empty() {
         return Ok(false);
     }
     sqlx::query_scalar::<_, bool>(
@@ -27,7 +28,7 @@ pub async fn has_permission(
          AND r.tenant_id = $2 AND rp.permission = $3 \
          )",
     )
-    .bind(user_id)
+    .bind(principal.user_id())
     .bind(tenant_id)
     .bind(permission)
     .fetch_one(pool)
@@ -37,6 +38,7 @@ pub async fn has_permission(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::auth::{authenticate_session, create_session};
     use sqlx::postgres::PgPoolOptions;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -66,12 +68,19 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("user");
+        let token = create_session(&pool, user_id, 60)
+            .await
+            .expect("create session");
+        let principal = authenticate_session(&pool, &token)
+            .await
+            .expect("authenticate")
+            .expect("active session");
         let tenant_a = format!("tenant-a-{nanos}");
         let tenant_b = format!("tenant-b-{nanos}");
-        assert!(!has_permission(&pool, user_id, &tenant_a, "orders.read")
+        assert!(!has_permission(&pool, principal, &tenant_a, "orders.read")
             .await
             .expect("default deny"));
-        assert!(!has_permission(&pool, 0, &tenant_a, "orders.read")
+        assert!(!has_permission(&pool, principal, "", "orders.read")
             .await
             .expect("invalid principal"));
 
@@ -96,13 +105,13 @@ mod tests {
             .await
             .expect("assignment");
 
-        assert!(has_permission(&pool, user_id, &tenant_a, "orders.read")
+        assert!(has_permission(&pool, principal, &tenant_a, "orders.read")
             .await
             .expect("granted"));
-        assert!(!has_permission(&pool, user_id, &tenant_a, "orders.write")
+        assert!(!has_permission(&pool, principal, &tenant_a, "orders.write")
             .await
             .expect("wrong action"));
-        assert!(!has_permission(&pool, user_id, &tenant_b, "orders.read")
+        assert!(!has_permission(&pool, principal, &tenant_b, "orders.read")
             .await
             .expect("wrong tenant"));
 
@@ -111,7 +120,7 @@ mod tests {
             .execute(&pool)
             .await
             .expect("deactivate");
-        assert!(!has_permission(&pool, user_id, &tenant_a, "orders.read")
+        assert!(!has_permission(&pool, principal, &tenant_a, "orders.read")
             .await
             .expect("inactive user"));
     }
