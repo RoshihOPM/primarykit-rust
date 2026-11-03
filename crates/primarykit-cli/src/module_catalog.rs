@@ -229,6 +229,11 @@ pub fn install_module(project: &Path, module_name: &str) -> io::Result<Vec<Strin
     let project = project.canonicalize()?;
     let origin_path = project.join("primarykit-origin.json");
     let registration_path = project.join("src/modules/mod.rs");
+    // Validate parent directories before reading or writing managed project files.
+    // A symlinked src/modules directory could otherwise redirect writes
+    // outside of the project even if mod.rs itself is a regular file.
+    assert_safe_parent(&project, &registration_path)?;
+    assert_safe_parent(&project, &project.join("src/lib.rs"))?;
     assert_regular_file(&origin_path)?;
     assert_regular_file(&registration_path)?;
     assert_regular_file(&project.join("Cargo.toml"))?;
@@ -449,14 +454,23 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn rejects_symlinked_module_directory() {
+    fn rejects_symlinked_module_directory_even_with_valid_external_registry() {
         use std::os::unix::fs::symlink;
         let project = TempProject::new("basic");
-        fs::remove_dir(project.0.join("src/modules")).expect_err("directory not empty");
-        // The registry is required and must remain a regular file.
+        let external = TempProject::new("basic");
+        let external_registry = external.0.join("src/modules/mod.rs");
+        let original = fs::read_to_string(&external_registry).expect("external registry");
+
         fs::remove_file(project.0.join("src/modules/mod.rs")).expect("remove registry");
-        fs::remove_dir(project.0.join("src/modules")).expect("remove dir");
-        symlink(std::env::temp_dir(), project.0.join("src/modules")).expect("symlink");
+        fs::remove_dir(project.0.join("src/modules")).expect("remove directory");
+        symlink(external.0.join("src/modules"), project.0.join("src/modules"))
+            .expect("symlink");
+
         assert!(install_module(&project.0, "api_errors").is_err());
+        assert!(!external.0.join("src/modules/api_errors.rs").exists());
+        assert_eq!(
+            fs::read_to_string(external_registry).expect("external registry"),
+            original
+        );
     }
 }
