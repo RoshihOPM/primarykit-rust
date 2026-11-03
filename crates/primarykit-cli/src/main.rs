@@ -2,7 +2,9 @@ use std::env;
 use std::path::PathBuf;
 use std::process;
 
-use primarykit::{available_modules, create_project_with_template, install_module, ProjectTemplate};
+use primarykit::{
+    available_modules, create_project_with_template, install_module, ProjectTemplate,
+};
 
 const USAGE: &str =
     "Usage:\n  primarykit new <project_name> [--template basic|postgres] [--output <directory>]\n  primarykit modules\n  primarykit add <module> [--project <directory>]\n  primarykit --help";

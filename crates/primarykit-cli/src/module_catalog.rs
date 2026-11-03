@@ -125,11 +125,12 @@ fn validate_origin(origin: &ProjectOrigin) -> io::Result<()> {
         if module.requires_postgres && origin.template != "postgres" {
             return Err(invalid("PostgreSQL module installed into basic template"));
         }
-        if !module
-            .dependencies
-            .iter()
-            .all(|dependency| origin.modules.iter().any(|installed| installed == dependency))
-        {
+        if !module.dependencies.iter().all(|dependency| {
+            origin
+                .modules
+                .iter()
+                .any(|installed| installed == dependency)
+        }) {
             return Err(invalid("installed module is missing a dependency"));
         }
     }
@@ -148,7 +149,10 @@ fn collect_dependencies(
     result: &mut Vec<&'static ModuleInfo>,
 ) -> io::Result<()> {
     let module = find_module(name).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, format!("unknown module: {name}"))
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unknown module: {name}"),
+        )
     })?;
     if module.requires_postgres && template != "postgres" {
         return Err(io::Error::new(
@@ -185,7 +189,10 @@ fn managed_block(modules: &[String]) -> String {
 fn assert_regular_file(path: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(invalid(format!("expected regular file: {}", path.display())));
+        return Err(invalid(format!(
+            "expected regular file: {}",
+            path.display()
+        )));
     }
     Ok(())
 }
@@ -234,7 +241,9 @@ pub fn install_module(project: &Path, module_name: &str) -> io::Result<Vec<Strin
     let original_registration = fs::read_to_string(&registration_path)?;
     let old_block = managed_block(&origin.modules);
     if original_registration.matches(&old_block).count() != 1 {
-        return Err(invalid("module registration was edited; refusing to overwrite"));
+        return Err(invalid(
+            "module registration was edited; refusing to overwrite",
+        ));
     }
 
     let mut resolved = Vec::new();
@@ -273,7 +282,10 @@ pub fn install_module(project: &Path, module_name: &str) -> io::Result<Vec<Strin
         }
     }
 
-    let installed: Vec<String> = pending.iter().map(|module| module.name.to_owned()).collect();
+    let installed: Vec<String> = pending
+        .iter()
+        .map(|module| module.name.to_owned())
+        .collect();
     origin.modules.extend(installed.iter().cloned());
     origin.modules.sort();
     let new_registration =
@@ -287,7 +299,10 @@ pub fn install_module(project: &Path, module_name: &str) -> io::Result<Vec<Strin
                 path.parent()
                     .ok_or_else(|| invalid("missing destination parent"))?,
             )?;
-            let mut handle = OpenOptions::new().write(true).create_new(true).open(&path)?;
+            let mut handle = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
             created.push(path);
             handle.write_all(source.as_bytes())?;
         }
@@ -321,18 +336,13 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos();
-            let path = std::env::temp_dir().join(format!(
-                "primarykit-modules-{}-{nanos}",
-                std::process::id()
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("primarykit-modules-{}-{nanos}", std::process::id()));
             fs::create_dir_all(path.join("src/modules")).expect("create test project");
             fs::write(path.join("Cargo.toml"), "[package]\nname=\"test\"\n").expect("manifest");
             fs::write(path.join("src/lib.rs"), "pub mod modules;\n").expect("library");
-            fs::write(
-                path.join("src/modules/mod.rs"),
-                initial_modules_source(),
-            )
-            .expect("registration");
+            fs::write(path.join("src/modules/mod.rs"), initial_modules_source())
+                .expect("registration");
             fs::write(
                 path.join("primarykit-origin.json"),
                 origin_json(template).expect("provenance"),
@@ -353,8 +363,7 @@ mod tests {
         let project = TempProject::new("basic");
         let added = install_module(&project.0, "pagination").expect("install");
         assert_eq!(added, ["api_errors", "pagination"]);
-        let registry =
-            fs::read_to_string(project.0.join("src/modules/mod.rs")).expect("registry");
+        let registry = fs::read_to_string(project.0.join("src/modules/mod.rs")).expect("registry");
         assert!(registry.contains("pub mod api_errors;"));
         assert!(registry.contains("pub mod pagination;"));
         assert!(project.0.join("src/modules/api_errors.rs").is_file());
