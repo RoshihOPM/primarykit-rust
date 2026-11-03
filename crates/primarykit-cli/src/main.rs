@@ -2,10 +2,10 @@ use std::env;
 use std::path::PathBuf;
 use std::process;
 
-use primarykit::{create_project_with_template, ProjectTemplate};
+use primarykit::{available_modules, create_project_with_template, install_module, ProjectTemplate};
 
 const USAGE: &str =
-    "Usage:\n  primarykit new <project_name> [--template basic|postgres] [--output <directory>]\n  primarykit --help";
+    "Usage:\n  primarykit new <project_name> [--template basic|postgres] [--output <directory>]\n  primarykit modules\n  primarykit add <module> [--project <directory>]\n  primarykit --help";
 
 fn main() {
     if let Err(error) = run() {
@@ -19,6 +19,41 @@ fn run() -> Result<(), String> {
     match args.next().as_deref() {
         Some("--help" | "-h") => {
             println!("{USAGE}");
+            Ok(())
+        }
+        Some("modules") => {
+            if args.next().is_some() {
+                return Err(USAGE.to_owned());
+            }
+            for module in available_modules() {
+                let requirement = if module.requires_postgres {
+                    " (requires postgres)"
+                } else {
+                    ""
+                };
+                println!("{}{}: {}", module.name, requirement, module.description);
+            }
+            Ok(())
+        }
+        Some("add") => {
+            let name = args.next().ok_or_else(|| USAGE.to_owned())?;
+            let mut project = PathBuf::from(".");
+            while let Some(option) = args.next() {
+                match option.as_str() {
+                    "--project" => {
+                        project = PathBuf::from(
+                            args.next()
+                                .ok_or_else(|| "--project requires a directory".to_owned())?,
+                        );
+                    }
+                    _ => return Err(format!("unknown option: {option}\n{USAGE}")),
+                }
+            }
+            let installed = install_module(&project, &name)
+                .map_err(|error| format!("failed to install module: {error}"))?;
+            for module in installed {
+                println!("Installed module: {module}");
+            }
             Ok(())
         }
         Some("new") => {

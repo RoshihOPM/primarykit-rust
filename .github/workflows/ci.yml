@@ -46,6 +46,10 @@ jobs:
         shell: bash
         run: |
           cargo run -p primarykit -- new smoke_api --output "$RUNNER_TEMP"
+          cargo run -p primarykit -- modules
+          cargo run -p primarykit -- add pagination --project "$RUNNER_TEMP/smoke_api"
+          test -f "$RUNNER_TEMP/smoke_api/src/modules/api_errors.rs"
+          test -f "$RUNNER_TEMP/smoke_api/src/modules/pagination.rs"
           cd "$RUNNER_TEMP/smoke_api"
           cargo fmt --all -- --check
           cargo clippy --all-targets -- -D warnings
@@ -90,6 +94,8 @@ jobs:
         shell: bash
         run: |
           cargo run -p primarykit -- new db_api --template postgres --output "$RUNNER_TEMP"
+          cargo run -p primarykit -- add audit --project "$RUNNER_TEMP/db_api"
+          test -f "$RUNNER_TEMP/db_api/migrations/20261103000001_create_audit_events.sql"
           cd "$RUNNER_TEMP/db_api"
           cargo fmt --all -- --check
           cargo clippy --all-targets -- -D warnings
