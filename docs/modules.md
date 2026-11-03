@@ -82,3 +82,9 @@ These are **code modules**, not a complete identity product. This release
 does not supply login/register HTTP endpoints, recovery, MFA, tenant provisioning,
 distributed rate limiting, cleanup workers or a full account-management UI.
 Review the business flow and threat model before exposing authentication publicly.
+
+For RBAC, `has_permission` accepts an `AuthenticatedUser` obtained from
+`auth::authenticate_session`, not an arbitrary user ID. The principal's
+identity field cannot be initialized from outside the auth module. After
+authentication, business queries still need to enforce actual tenant and
+resource ownership. Sessions must be revalidated for each incoming request.
