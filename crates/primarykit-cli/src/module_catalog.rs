@@ -7,6 +7,8 @@ use std::path::{Component, Path};
 const GENERATOR: &str = "primarykit-rust";
 const MODULE_START: &str = "// primarykit:modules:start\n";
 const MODULE_END: &str = "// primarykit:modules:end\n";
+const DEPENDENCIES_START: &str = "# primarykit:dependencies:start\n";
+const DEPENDENCIES_END: &str = "# primarykit:dependencies:end\n";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -34,6 +36,7 @@ pub struct ModuleInfo {
     pub description: &'static str,
     pub dependencies: &'static [&'static str],
     pub requires_postgres: bool,
+    cargo_dependencies: &'static [&'static str],
     files: &'static [ModuleFile],
 }
 
@@ -62,12 +65,34 @@ static AUDIT_FILES: &[ModuleFile] = &[
     },
 ];
 
+static AUTH_FILES: &[ModuleFile] = &[
+    ModuleFile {
+        path: "src/modules/auth.rs",
+        source: include_str!("../../../modules/auth/auth.rs"),
+    },
+    ModuleFile {
+        path: "migrations/20261103000002_create_auth.sql",
+        source: include_str!("../../../modules/auth/20261103000002_create_auth.sql"),
+    },
+];
+static PERMISSIONS_FILES: &[ModuleFile] = &[
+    ModuleFile {
+        path: "src/modules/permissions.rs",
+        source: include_str!("../../../modules/permissions/permissions.rs"),
+    },
+    ModuleFile {
+        path: "migrations/20261103000003_create_rbac.sql",
+        source: include_str!("../../../modules/permissions/20261103000003_create_rbac.sql"),
+    },
+];
+
 pub static MODULES: &[ModuleInfo] = &[
     ModuleInfo {
         name: "api_errors",
         description: "Structured JSON API errors",
         dependencies: &[],
         requires_postgres: false,
+        cargo_dependencies: &[],
         files: API_ERRORS_FILES,
     },
     ModuleInfo {
@@ -75,6 +100,7 @@ pub static MODULES: &[ModuleInfo] = &[
         description: "Validated pagination parameters",
         dependencies: &["api_errors"],
         requires_postgres: false,
+        cargo_dependencies: &[],
         files: PAGINATION_FILES,
     },
     ModuleInfo {
@@ -82,7 +108,30 @@ pub static MODULES: &[ModuleInfo] = &[
         description: "Transactional PostgreSQL audit events",
         dependencies: &[],
         requires_postgres: true,
+        cargo_dependencies: &[],
         files: AUDIT_FILES,
+    },
+    ModuleInfo {
+        name: "auth",
+        description: "Argon2id password hashes and revocable opaque PostgreSQL sessions",
+        dependencies: &[],
+        requires_postgres: true,
+        cargo_dependencies: &[
+            "argon2 = \"0.5\"",
+            "hex = \"0.4\"",
+            "rand = \"0.8\"",
+            "sha2 = \"0.10\"",
+            "thiserror = \"2\"",
+        ],
+        files: AUTH_FILES,
+    },
+    ModuleInfo {
+        name: "permissions",
+        description: "Fail-closed tenant-scoped role-based permissions",
+        dependencies: &["auth"],
+        requires_postgres: true,
+        cargo_dependencies: &[],
+        files: PERMISSIONS_FILES,
     },
 ];
 
@@ -92,6 +141,22 @@ pub fn available_modules() -> &'static [ModuleInfo] {
 
 pub fn initial_modules_source() -> String {
     managed_block(&[])
+}
+
+fn managed_dependencies(modules: &[String]) -> String {
+    let mut requirements = BTreeSet::new();
+    for name in modules {
+        if let Some(module) = find_module(name) {
+            requirements.extend(module.cargo_dependencies.iter().copied());
+        }
+    }
+    let mut source = DEPENDENCIES_START.to_owned();
+    for requirement in requirements {
+        source.push_str(requirement);
+        source.push('\n');
+    }
+    source.push_str(DEPENDENCIES_END);
+    source
 }
 
 pub fn origin_json(template: &str) -> io::Result<String> {
@@ -239,6 +304,8 @@ pub fn install_module(project: &Path, module_name: &str) -> io::Result<Vec<Strin
     assert_regular_file(&project.join("Cargo.toml"))?;
     assert_regular_file(&project.join("src/lib.rs"))?;
 
+    let manifest_path = project.join("Cargo.toml");
+    let original_manifest = fs::read_to_string(&manifest_path)?;
     let original_origin = fs::read_to_string(&origin_path)?;
     let mut origin: ProjectOrigin =
         serde_json::from_str(&original_origin).map_err(|error| invalid(error.to_string()))?;
@@ -287,12 +354,24 @@ pub fn install_module(project: &Path, module_name: &str) -> io::Result<Vec<Strin
         }
     }
 
+    let old_dependencies_block = managed_dependencies(&origin.modules);
     let installed: Vec<String> = pending
         .iter()
         .map(|module| module.name.to_owned())
         .collect();
     origin.modules.extend(installed.iter().cloned());
     origin.modules.sort();
+    let new_dependencies_block = managed_dependencies(&origin.modules);
+    let next_manifest = if old_dependencies_block == new_dependencies_block {
+        None
+    } else {
+        if original_manifest.matches(&old_dependencies_block).count() != 1 {
+            return Err(invalid(
+                "missing or modified managed Cargo dependencies block; refusing to edit manifest",
+            ));
+        }
+        Some(original_manifest.replacen(&old_dependencies_block, &new_dependencies_block, 1))
+    };
     let new_registration =
         original_registration.replacen(&old_block, &managed_block(&origin.modules), 1);
     let new_origin = encode_origin(&origin)?;
@@ -312,12 +391,18 @@ pub fn install_module(project: &Path, module_name: &str) -> io::Result<Vec<Strin
             handle.write_all(source.as_bytes())?;
         }
         fs::write(&registration_path, &new_registration)?;
+        if let Some(manifest) = &next_manifest {
+            fs::write(&manifest_path, manifest)?;
+        }
         fs::write(&origin_path, &new_origin)?;
         Ok(())
     })();
 
     if let Err(error) = result {
         let _ = fs::write(&registration_path, original_registration);
+        if next_manifest.is_some() {
+            let _ = fs::write(&manifest_path, original_manifest);
+        }
         let _ = fs::write(&origin_path, original_origin);
         for path in created.iter().rev() {
             let _ = fs::remove_file(path);
@@ -344,7 +429,14 @@ mod tests {
             let path = std::env::temp_dir()
                 .join(format!("primarykit-modules-{}-{nanos}", std::process::id()));
             fs::create_dir_all(path.join("src/modules")).expect("create test project");
-            fs::write(path.join("Cargo.toml"), "[package]\nname=\"test\"\n").expect("manifest");
+            fs::write(
+                path.join("Cargo.toml"),
+                format!(
+                    "[package]\nname=\"test\"\n[dependencies]\n{}",
+                    managed_dependencies(&[])
+                ),
+            )
+            .expect("manifest");
             fs::write(path.join("src/lib.rs"), "pub mod modules;\n").expect("library");
             fs::write(path.join("src/modules/mod.rs"), initial_modules_source())
                 .expect("registration");
@@ -423,6 +515,43 @@ mod tests {
             .0
             .join("migrations/20261103000001_create_audit_events.sql")
             .is_file());
+    }
+
+    #[test]
+    fn installs_auth_and_permissions_with_only_needed_dependencies() {
+        let project = TempProject::new("postgres");
+        let added = install_module(&project.0, "permissions").expect("install permissions");
+        assert_eq!(added, ["auth", "permissions"]);
+        assert!(project.0.join("src/modules/auth.rs").is_file());
+        assert!(project.0.join("src/modules/permissions.rs").is_file());
+        assert!(project
+            .0
+            .join("migrations/20261103000002_create_auth.sql")
+            .is_file());
+        let manifest = fs::read_to_string(project.0.join("Cargo.toml")).expect("manifest");
+        assert!(manifest.contains("argon2 = \"0.5\""));
+        assert!(manifest.contains("thiserror = \"2\""));
+        assert_eq!(manifest.matches("argon2 =").count(), 1);
+    }
+
+    #[test]
+    fn rejects_auth_if_manifest_block_was_removed_without_partial_install() {
+        let project = TempProject::new("postgres");
+        let manifest = project.0.join("Cargo.toml");
+        fs::write(&manifest, "[package]\nname=\"user_owned\"\n").expect("custom manifest");
+        assert!(install_module(&project.0, "auth").is_err());
+        assert_eq!(
+            fs::read_to_string(manifest).expect("manifest"),
+            "[package]\nname=\"user_owned\"\n"
+        );
+        assert!(!project.0.join("src/modules/auth.rs").exists());
+    }
+
+    #[test]
+    fn rejects_auth_on_basic_template() {
+        let project = TempProject::new("basic");
+        let failure = install_module(&project.0, "auth").expect_err("postgres required");
+        assert_eq!(failure.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

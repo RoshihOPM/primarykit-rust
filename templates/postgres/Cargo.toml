@@ -12,6 +12,10 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Optional dependencies installed by PrimaryKit modules; edit only outside this block.
+# primarykit:dependencies:start
+# primarykit:dependencies:end
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 

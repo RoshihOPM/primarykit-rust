@@ -26,6 +26,7 @@ PrimaryKit keeps the generated service independent from the generator.
     cargo run -p primarykit -- modules
     cargo run -p primarykit -- add pagination --project ./inventory_api
     cargo run -p primarykit -- add audit --project ./inventory_api
+    cargo run -p primarykit -- add permissions --project ./inventory_api
 
 The second command installs both pagination and its api_errors dependency.
 The audit module requires a project created with --template postgres.
@@ -54,8 +55,10 @@ graceful shutdown, and a non-root Docker runtime.
 
 Early bootstrap. The optional postgres template includes PostgreSQL, SQLx
 migrations, and database readiness. The initial module catalog includes api_errors,
-pagination and transaction-scoped audit events. Authentication, permissions,
-API keys, queues and comprehensive security checks are NOT implemented yet.
+pagination and transaction-scoped audit events. The optional postgres
+template can install `auth` (Argon2id and revocable sessions) and
+`permissions` (tenant-scoped RBAC). Login endpoints, recovery, rate limiting,
+API keys, queues and comprehensive security hardening are NOT implemented yet.
 
 ## Design principles
 
