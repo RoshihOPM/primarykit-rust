@@ -76,7 +76,9 @@ mod tests {
         .expect("insert audit event");
 
         let assert_rejected = |error: sqlx::Error| {
-            let code = error.as_database_error().and_then(|db_error| db_error.code());
+            let code = error
+                .as_database_error()
+                .and_then(|db_error| db_error.code());
             assert_eq!(code.as_deref(), Some("42501"));
         };
         for sql in [
