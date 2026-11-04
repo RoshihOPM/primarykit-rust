@@ -202,7 +202,9 @@ pub async fn declare(channel: &Channel, config: &TaskConfig) -> Result<(), TaskE
             FieldTable::default(),
         )
         .await?;
-    channel.confirm_select(ConfirmSelectOptions::default()).await?;
+    channel
+        .confirm_select(ConfirmSelectOptions::default())
+        .await?;
     Ok(())
 }
 
@@ -330,7 +332,9 @@ pub async fn run_worker(
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), TaskError> {
     config.validate()?;
-    channel.confirm_select(ConfirmSelectOptions::default()).await?;
+    channel
+        .confirm_select(ConfirmSelectOptions::default())
+        .await?;
     channel.basic_qos(1, BasicQosOptions::default()).await?;
     let mut consumer = channel
         .basic_consume(
