@@ -125,6 +125,43 @@ pub async fn create_session(
     Ok(token)
 }
 
+/// Issue a session only if the password hash verified by the caller is still current.
+/// Holding a share lock through the insert prevents password-reset races:
+/// an UPDATE to the user's password waits until session insertion commits,
+/// and then reset revokes the inserted session.
+pub async fn create_session_if_password_unchanged(
+    pool: &PgPool,
+    user_id: i64,
+    verified_password_hash: &str,
+    ttl_seconds: i64,
+) -> Result<Option<String>, AuthError> {
+    validate_ttl(ttl_seconds)?;
+    let mut tx = pool.begin().await?;
+    let authorized: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM auth_users \
+         WHERE id = $1 AND password_hash = $2 AND is_active FOR SHARE",
+    )
+    .bind(user_id)
+    .bind(verified_password_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if authorized.is_none() {
+        return Ok(None);
+    }
+    let token = issue_token()?;
+    sqlx::query(
+        "INSERT INTO auth_sessions(token_hash, user_id, expires_at) \
+         VALUES($1, $2, clock_timestamp() + ($3::BIGINT * INTERVAL '1 second'))",
+    )
+    .bind(token_hash(&token))
+    .bind(user_id)
+    .bind(ttl_seconds)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Some(token))
+}
+
 /// Authentication is performed against PostgreSQL on every call; no stale session cache.
 pub async fn authenticate_session(
     pool: &PgPool,
@@ -309,6 +346,35 @@ mod tests {
             create_session(&pool, user_id, 60).await,
             Err(AuthError::InactiveUser)
         ));
+    }
+
+    #[tokio::test]
+    async fn stale_password_hash_cannot_issue_a_session() {
+        let Some(pool) = test_pool().await else {
+            return;
+        };
+        let user_id = test_user(&pool).await;
+        let old_hash = "test-only-placeholder-hash";
+        let token = create_session_if_password_unchanged(&pool, user_id, old_hash, 60)
+            .await
+            .expect("insert")
+            .expect("current password");
+        assert!(authenticate_session(&pool, &token)
+            .await
+            .expect("authenticate")
+            .is_some());
+
+        sqlx::query("UPDATE auth_users SET password_hash = 'changed-hash' WHERE id = $1")
+            .bind(user_id)
+            .execute(&pool)
+            .await
+            .expect("reset password");
+        assert!(
+            create_session_if_password_unchanged(&pool, user_id, old_hash, 60)
+                .await
+                .expect("stale login")
+                .is_none()
+        );
     }
 
     #[tokio::test]
