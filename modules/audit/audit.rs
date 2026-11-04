@@ -151,8 +151,9 @@ mod tests {
         assert_eq!(row.4.as_deref(), Some("request-42"));
         tx.rollback().await.expect("rollback");
 
-        let persisted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audit_events WHERE id = $1)")
-            .bind(row.0)
+        let persisted: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audit_events WHERE id = $1)")
+                .bind(row.0)
             .fetch_one(&pool)
             .await
             .expect("read after rollback");
