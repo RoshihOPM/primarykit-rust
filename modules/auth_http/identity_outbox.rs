@@ -148,7 +148,11 @@ async fn send_filtered(
         None
     };
     let delivery_result = if let Some(token) = token {
-        let kind: &'static str = if purpose == "verify" { "verify" } else { "reset" };
+        let kind: &'static str = if purpose == "verify" {
+            "verify"
+        } else {
+            "reset"
+        };
         timeout(SEND_TIMEOUT, (deliver)(kind, email, token))
             .await
             .map(|result| result.is_ok())
@@ -185,7 +189,11 @@ async fn send_filtered(
         .bind(terminal)
         .execute(pool)
         .await?;
-        tracing::warn!(outbox_id = id, attempt, "identity email scheduled for retry");
+        tracing::warn!(
+            outbox_id = id,
+            attempt,
+            "identity email scheduled for retry"
+        );
     }
     Ok(true)
 }

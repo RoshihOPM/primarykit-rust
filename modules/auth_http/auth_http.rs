@@ -623,16 +623,14 @@ mod tests {
         assert!(!ciphertext.is_empty());
         assert_eq!(deliveries.lock().expect("messages").len(), 0);
 
-        assert!(
-            identity_outbox::send_next_for_email(
-                &state.pool,
-                &state.outbox_key,
-                &state.deliver,
-                &email,
-            )
-            .await
-            .expect("first attempt")
-        );
+        assert!(identity_outbox::send_next_for_email(
+            &state.pool,
+            &state.outbox_key,
+            &state.deliver,
+            &email,
+        )
+        .await
+        .expect("first attempt"));
         assert!(deliveries.lock().expect("messages").is_empty());
         let (attempts, sent): (i32, bool) = sqlx::query_as(
             "SELECT attempts, delivered_at IS NOT NULL FROM auth_http_outbox WHERE id = $1",
@@ -651,16 +649,14 @@ mod tests {
         .execute(&state.pool)
         .await
         .expect("enable retry");
-        assert!(
-            identity_outbox::send_next_for_email(
-                &state.pool,
-                &state.outbox_key,
-                &state.deliver,
-                &email,
-            )
-            .await
-            .expect("second attempt")
-        );
+        assert!(identity_outbox::send_next_for_email(
+            &state.pool,
+            &state.outbox_key,
+            &state.deliver,
+            &email,
+        )
+        .await
+        .expect("second attempt"));
         assert_eq!(deliveries.lock().expect("messages").len(), 1);
         let (attempts, sent, encrypted_size): (i32, bool, i32) = sqlx::query_as(
             "SELECT attempts, delivered_at IS NOT NULL, octet_length(ciphertext) \
@@ -736,9 +732,12 @@ mod tests {
         .execute(&state.pool)
         .await
         .expect("expire");
-        assert!(identity_outbox::cleanup_once(&state.pool)
-            .await
-            .expect("cleanup") >= 1);
+        assert!(
+            identity_outbox::cleanup_once(&state.pool)
+                .await
+                .expect("cleanup")
+                >= 1
+        );
 
         let remaining: i64 =
             sqlx::query_scalar("SELECT count(*) FROM auth_http_outbox WHERE token_hash = $1")

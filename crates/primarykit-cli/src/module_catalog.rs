@@ -101,7 +101,9 @@ static AUTH_HTTP_FILES: &[ModuleFile] = &[
     },
     ModuleFile {
         path: "migrations/20261104000006_create_identity_outbox.sql",
-        source: include_str!("../../../modules/auth_http/20261104000006_create_identity_outbox.sql"),
+        source: include_str!(
+            "../../../modules/auth_http/20261104000006_create_identity_outbox.sql"
+        ),
     },
 ];
 
