@@ -57,7 +57,7 @@ graceful shutdown, and a non-root Docker runtime.
 
 Early bootstrap. The optional postgres template includes PostgreSQL, SQLx
 migrations, and database readiness. The module catalog includes validation, pagination, audit, authentication
-with optional HTTP flows, tenant RBAC, SMTP integration and a durable webhook
+with optional HTTP flows, tenant RBAC, tenant API keys, SMTP integration and a durable webhook
 inbox/outbox. Components are opt-in and intended for independent Axum services.
 Production security still requires deployment-specific network limits,
 secret management, provider verification and operational review.

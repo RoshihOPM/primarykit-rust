@@ -22,6 +22,7 @@ api_errors. audit is only valid with the PostgreSQL template.
 | audit | postgres | none | Transactional PostgreSQL audit event writer and migration |
 | auth | postgres | none | Argon2id passwords, opaque revocable/rotating sessions |
 | permissions | postgres | auth | Tenant-scoped deny-by-default RBAC |
+| api_keys | postgres | permissions | One-time opaque tenant keys with live RBAC |
 | auth_http | postgres | auth | Identity API with encrypted transactional outbox |
 | auth_smtp | postgres | auth_http | TLS-only SMTP delivery callback |
 | owned_records | postgres | permissions | Tenant and owner-aware SQL access |
@@ -284,3 +285,29 @@ unnecessary secrets or personal information in messages.
 A full HTTP transport, production secret provisioning, broker setup and
 per-provider authentication policies are intentionally application-owned.
 The module never exposes HTTP routes automatically.
+
+## API keys (tenant-scoped)
+
+The optional `api_keys` module depends on `permissions` and `auth`:
+
+    primarykit add api_keys --project ./db_api
+
+An authenticated user may issue a 256-bit opaque API key for a tenant only
+when current RBAC grants `api_keys.create` AND each requested scope.
+The returned bearer token is disclosed once; PostgreSQL stores only its
+SHA-256 digest. Scopes must be distinct, cannot contain wildcards, and must
+match explicit tenant permissions. Key expiry is capped at 90 days.
+
+`authenticate(pool, token)` resolves a typed, non-forgeable principal.
+`allows(pool, &principal, permission)` rechecks the saved scopes, live RBAC,
+expiry, revocation and user activation on every use. Revoking a role therefore
+removes key access immediately. Simply checking the token once and trusting
+a requested permission is unsafe.
+
+The owner may revoke a key while active. Other users need `api_keys.revoke`
+in the same tenant. Do not include API tokens in URLs, logs or analytics;
+use an Authorization header behind TLS, and implement client-level limits.
+
+This is a portable backend module, not a complete HTTP key-management API.
+Applications must build their own audit trail, authorization middleware and
+administration UX; do not grant tenant-wide access based solely on key format.
