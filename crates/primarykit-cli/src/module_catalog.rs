@@ -86,6 +86,17 @@ static PERMISSIONS_FILES: &[ModuleFile] = &[
     },
 ];
 
+static AUTH_HTTP_FILES: &[ModuleFile] = &[
+    ModuleFile {
+        path: "src/modules/auth_http.rs",
+        source: include_str!("../../../modules/auth_http/auth_http.rs"),
+    },
+    ModuleFile {
+        path: "migrations/20261104000004_create_identity_http.sql",
+        source: include_str!("../../../modules/auth_http/20261104000004_create_identity_http.sql"),
+    },
+];
+
 pub static MODULES: &[ModuleInfo] = &[
     ModuleInfo {
         name: "api_errors",
@@ -132,6 +143,14 @@ pub static MODULES: &[ModuleInfo] = &[
         requires_postgres: true,
         cargo_dependencies: &[],
         files: PERMISSIONS_FILES,
+    },
+    ModuleInfo {
+        name: "auth_http",
+        description: "Opt-in HTTP registration, login and password reset with database throttling",
+        dependencies: &["auth"],
+        requires_postgres: true,
+        cargo_dependencies: &[],
+        files: AUTH_HTTP_FILES,
     },
 ];
 
@@ -552,6 +571,19 @@ mod tests {
         let project = TempProject::new("basic");
         let failure = install_module(&project.0, "auth").expect_err("postgres required");
         assert_eq!(failure.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn auth_http_installs_in_postgres_template_with_auth() {
+        let project = TempProject::new("postgres");
+        let installed = install_module(&project.0, "auth_http").expect("install");
+        assert_eq!(installed, ["auth", "auth_http"]);
+        assert!(project.0.join("src/modules/auth_http.rs").is_file());
+        assert!(project.0.join("src/modules/auth.rs").is_file());
+        assert!(project
+            .0
+            .join("migrations/20261104000004_create_identity_http.sql")
+            .is_file());
     }
 
     #[test]

@@ -88,3 +88,38 @@ For RBAC, `has_permission` accepts an `AuthenticatedUser` obtained from
 identity field cannot be initialized from outside the auth module. After
 authentication, business queries still need to enforce actual tenant and
 resource ownership. Sessions must be revalidated for each incoming request.
+
+
+## Optional HTTP identity flows
+
+Install the portable Axum module in a PostgreSQL project:
+
+    primarykit add auth_http --project ./db_api
+
+It depends on \`auth\` and exposes an **opt-in** router. You must construct an
+\`auth_http::IdentityState\` with a PostgreSQL pool and a \`TokenDelivery\`
+callback, then merge \`auth_http::routes(state)\` into the app router.
+No routes are exposed automatically by the generator.
+
+Routes: POST /auth/register, /auth/verify-email, /auth/login,
+/auth/logout, /auth/me, /auth/password-reset/request,
+/auth/password-reset/confirm. Only verification activates a new user.
+Password reset revokes all active sessions. Tokens for verification and
+password reset are 256-bit opaque secrets, hashed in PostgreSQL and single-use.
+No token is included in a public verification/reset-request response.
+The host application's token delivery callback must construct a trusted HTTPS
+URL and send email; the module does not bundle SMTP credentials or a mail worker.
+
+The database-backed identity limiter allows five attempts per 15-minute
+window per normalized email and operation. **It is not an edge/IP limiter.**
+In production use TLS and additional per-IP/network limits at an ingress
+or reverse proxy. Do not trust spoofable X-Forwarded-For headers without
+explicit proxy trust configuration. Password hashing/verification is moved
+to Tokio's blocking thread pool. Keep its concurrency bounded by operational
+policy to avoid CPU and memory exhaustion.
+
+Delivery errors are logged without secrets and exposed as generic 202
+responses; integrate a reliable email provider with retries and monitoring.
+A background task should remove expired/used one-time tokens and old
+rate-limit rows. This module is a starting point and requires an application
+security review before public deployment.
