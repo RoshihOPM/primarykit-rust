@@ -27,8 +27,7 @@ const MAX_PASSWORD_LENGTH: usize = 1024;
 /// trusted, HTTPS-only verification/reset links. Tokens are never placed in
 /// HTTP responses by this module.
 pub type DeliveryFuture = Pin<Box<dyn Future<Output = Result<(), ()>> + Send>>;
-pub type TokenDelivery =
-    Arc<dyn Fn(&'static str, String, String) -> DeliveryFuture + Send + Sync>;
+pub type TokenDelivery = Arc<dyn Fn(&'static str, String, String) -> DeliveryFuture + Send + Sync>;
 
 #[derive(Clone)]
 pub struct IdentityState {
@@ -94,7 +93,9 @@ fn normalized_email(email: &str) -> Option<String> {
     let email = email.trim();
     if !(3..=320).contains(&email.len())
         || !email.is_ascii()
-        || email.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+        || email
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
         || email.matches('@').count() != 1
     {
         return None;
@@ -233,15 +234,13 @@ async fn register(
     // Re-send verification for existing pending identities, not active users.
     let candidate_id = match new_id {
         Some(id) => Some(id),
-        None => {
-            sqlx::query_scalar::<_, i64>(
-                "SELECT id FROM auth_users WHERE lower(email) = $1 AND NOT is_active",
-            )
-            .bind(&email)
-            .fetch_optional(&state.pool)
-            .await
-            .map_err(internal)?
-        }
+        None => sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM auth_users WHERE lower(email) = $1 AND NOT is_active",
+        )
+        .bind(&email)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(internal)?,
     };
     if let Some(id) = candidate_id {
         enqueue_token(&state, id, email, "verify", VERIFY_TTL_MINUTES).await?;
@@ -274,11 +273,13 @@ async fn verify_email(
         .execute(&mut *tx)
         .await
         .map_err(internal)?;
-    sqlx::query("UPDATE auth_http_one_time_tokens SET used_at = clock_timestamp() WHERE token_hash = $1")
-        .bind(sha256(&input.token))
-        .execute(&mut *tx)
-        .await
-        .map_err(internal)?;
+    sqlx::query(
+        "UPDATE auth_http_one_time_tokens SET used_at = clock_timestamp() WHERE token_hash = $1",
+    )
+    .bind(sha256(&input.token))
+    .execute(&mut *tx)
+    .await
+    .map_err(internal)?;
     tx.commit().await.map_err(internal)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -315,7 +316,12 @@ async fn login(
             StatusCode::UNAUTHORIZED
         })?;
     let mut headers = HeaderMap::new();
-    headers.insert(header::CACHE_CONTROL, "no-store".parse().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?);
+    headers.insert(
+        header::CACHE_CONTROL,
+        "no-store"
+            .parse()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    );
     Ok((
         headers,
         Json(SessionResponse {
@@ -334,12 +340,11 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
         .strip_prefix("Bearer ")
 }
 
-async fn logout(
-    State(state): State<IdentityState>,
-    headers: HeaderMap,
-) -> HttpResult<StatusCode> {
+async fn logout(State(state): State<IdentityState>, headers: HeaderMap) -> HttpResult<StatusCode> {
     if let Some(token) = bearer(&headers) {
-        auth::revoke_session(&state.pool, token).await.map_err(internal)?;
+        auth::revoke_session(&state.pool, token)
+            .await
+            .map_err(internal)?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -368,13 +373,12 @@ async fn request_reset(
     if !allow_attempt(&state.pool, "reset", &email).await? {
         return Ok(StatusCode::ACCEPTED);
     }
-    let user_id: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM auth_users WHERE lower(email) = $1 AND is_active",
-    )
-    .bind(&email)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(internal)?;
+    let user_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM auth_users WHERE lower(email) = $1 AND is_active")
+            .bind(&email)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(internal)?;
     if let Some(id) = user_id {
         enqueue_token(&state, id, email, "reset", RESET_TTL_MINUTES).await?;
     }
@@ -447,12 +451,19 @@ mod tests {
 
     async fn setup() -> Option<(IdentityState, Arc<Mutex<Vec<(String, String, String)>>>)> {
         let url = std::env::var("DATABASE_URL").ok()?;
-        let pool = PgPoolOptions::new().max_connections(5).connect(&url).await.expect("db");
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await
+            .expect("db");
         sqlx::migrate!().run(&pool).await.expect("migrations");
         let deliveries = Arc::new(Mutex::new(Vec::new()));
         let recorded = Arc::clone(&deliveries);
         let deliver: TokenDelivery = Arc::new(move |purpose, email, token| {
-            recorded.lock().expect("lock").push((purpose.to_owned(), email, token));
+            recorded
+                .lock()
+                .expect("lock")
+                .push((purpose.to_owned(), email, token));
             Box::pin(async { Ok(()) })
         });
         Some((IdentityState { pool, deliver }, deliveries))
@@ -475,42 +486,78 @@ mod tests {
 
     #[tokio::test]
     async fn register_verify_and_reset_are_single_use() {
-        let Some((state, deliveries)) = setup().await else { return };
+        let Some((state, deliveries)) = setup().await else {
+            return;
+        };
         let email = test_email();
-        let register_body = format!(r#"{{"email":"{email}","password":"sample-secure-passphrase"}}"#);
-        assert_eq!(post(&state, "/auth/register", register_body).await, StatusCode::ACCEPTED);
+        let register_body =
+            format!(r#"{{"email":"{email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", register_body).await,
+            StatusCode::ACCEPTED
+        );
 
         let verify_token = deliveries.lock().expect("deliveries")[0].2.clone();
         assert_eq!(
-            post(&state, "/auth/verify-email", format!(r#"{{"token":"{verify_token}"}}"#)).await,
+            post(
+                &state,
+                "/auth/verify-email",
+                format!(r#"{{"token":"{verify_token}"}}"#)
+            )
+            .await,
             StatusCode::NO_CONTENT
         );
         assert_eq!(
-            post(&state, "/auth/verify-email", format!(r#"{{"token":"{verify_token}"}}"#)).await,
+            post(
+                &state,
+                "/auth/verify-email",
+                format!(r#"{{"token":"{verify_token}"}}"#)
+            )
+            .await,
             StatusCode::BAD_REQUEST
         );
         assert_eq!(
-            post(&state, "/auth/password-reset/request", format!(r#"{{"email":"{email}"}}"#)).await,
+            post(
+                &state,
+                "/auth/password-reset/request",
+                format!(r#"{{"email":"{email}"}}"#)
+            )
+            .await,
             StatusCode::ACCEPTED
         );
         let reset_token = deliveries.lock().expect("deliveries")[1].2.clone();
         assert_eq!(
-            post(&state, "/auth/password-reset/confirm", format!(r#"{{"token":"{reset_token}","new_password":"new-secure-password-123"}}"#)).await,
+            post(
+                &state,
+                "/auth/password-reset/confirm",
+                format!(r#"{{"token":"{reset_token}","new_password":"new-secure-password-123"}}"#)
+            )
+            .await,
             StatusCode::NO_CONTENT
         );
         assert_eq!(
-            post(&state, "/auth/password-reset/confirm", format!(r#"{{"token":"{reset_token}","new_password":"new-secure-password-123"}}"#)).await,
+            post(
+                &state,
+                "/auth/password-reset/confirm",
+                format!(r#"{{"token":"{reset_token}","new_password":"new-secure-password-123"}}"#)
+            )
+            .await,
             StatusCode::BAD_REQUEST
         );
     }
 
     #[tokio::test]
     async fn failed_logins_are_limited_across_requests() {
-        let Some((state, _)) = setup().await else { return };
+        let Some((state, _)) = setup().await else {
+            return;
+        };
         let email = test_email();
         let body = format!(r#"{{"email":"{email}","password":"incorrect-password"}}"#);
         for _ in 0..ATTEMPT_LIMIT {
-            assert_eq!(post(&state, "/auth/login", body.clone()).await, StatusCode::UNAUTHORIZED);
+            assert_eq!(
+                post(&state, "/auth/login", body.clone()).await,
+                StatusCode::UNAUTHORIZED
+            );
         }
         assert_eq!(
             post(&state, "/auth/login", body).await,
@@ -520,10 +567,17 @@ mod tests {
 
     #[tokio::test]
     async fn reset_request_does_not_reveal_unknown_accounts() {
-        let Some((state, deliveries)) = setup().await else { return };
+        let Some((state, deliveries)) = setup().await else {
+            return;
+        };
         let email = test_email();
         assert_eq!(
-            post(&state, "/auth/password-reset/request", format!(r#"{{"email":"{email}"}}"#)).await,
+            post(
+                &state,
+                "/auth/password-reset/request",
+                format!(r#"{{"email":"{email}"}}"#)
+            )
+            .await,
             StatusCode::ACCEPTED
         );
         assert!(deliveries.lock().expect("deliveries").is_empty());
