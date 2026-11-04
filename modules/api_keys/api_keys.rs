@@ -57,12 +57,16 @@ impl ApiKeyPrincipal {
 
 fn valid_tenant(value: &str) -> bool {
     (1..=200).contains(&value.len())
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
 fn valid_scope(value: &str) -> bool {
     (1..=100).contains(&value.len())
-        && value.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
 }
 
 fn scopes_checked(values: &[String]) -> Result<Vec<String>, ApiKeyError> {
@@ -161,12 +165,14 @@ pub async fn authenticate(
     .bind(token_hash(token))
     .fetch_optional(pool)
     .await?;
-    Ok(record.map(|(id, user_id, tenant_id, scopes)| ApiKeyPrincipal {
-        id,
-        user_id,
-        tenant_id,
-        scopes,
-    }))
+    Ok(
+        record.map(|(id, user_id, tenant_id, scopes)| ApiKeyPrincipal {
+            id,
+            user_id,
+            tenant_id,
+            scopes,
+        }),
+    )
 }
 
 /// Deny unless BOTH the saved key scope and current tenant RBAC allow the
@@ -229,8 +235,8 @@ pub async fn revoke(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::auth::{authenticate_session, create_session};
+    use super::*;
     use sqlx::postgres::PgPoolOptions;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -262,7 +268,10 @@ mod tests {
         let user: i64 = sqlx::query_scalar(
             "INSERT INTO auth_users(email,password_hash) VALUES ($1,'test') RETURNING id",
         )
-        .bind(format!("key-{nanos}-{}@example.invalid", std::process::id()))
+        .bind(format!(
+            "key-{nanos}-{}@example.invalid",
+            std::process::id()
+        ))
         .fetch_one(&pool)
         .await
         .expect("user");
@@ -304,7 +313,15 @@ mod tests {
             Err(ApiKeyError::Forbidden)
         ));
         assert!(matches!(
-            issue(&pool, actor, &tenant, "automation", &["orders.write".into()], 3600).await,
+            issue(
+                &pool,
+                actor,
+                &tenant,
+                "automation",
+                &["orders.write".into()],
+                3600
+            )
+            .await,
             Err(ApiKeyError::Forbidden)
         ));
 
@@ -323,14 +340,20 @@ mod tests {
             .expect("token lookup")
             .expect("authenticated key");
         assert_eq!(principal.tenant_id(), tenant);
-        assert!(allows(&pool, &principal, "orders.read").await.expect("scope"));
-        assert!(!allows(&pool, &principal, "orders.write").await.expect("scope"));
-
-        sqlx::query("DELETE FROM rbac_role_permissions WHERE role_id=$1 AND permission='orders.read'")
-            .bind(role)
-            .execute(&pool)
+        assert!(allows(&pool, &principal, "orders.read")
             .await
-            .expect("role revoked");
+            .expect("scope"));
+        assert!(!allows(&pool, &principal, "orders.write")
+            .await
+            .expect("scope"));
+
+        sqlx::query(
+            "DELETE FROM rbac_role_permissions WHERE role_id=$1 AND permission='orders.read'",
+        )
+        .bind(role)
+        .execute(&pool)
+        .await
+        .expect("role revoked");
         assert!(!allows(&pool, &principal, "orders.read")
             .await
             .expect("live role denied"));
@@ -344,19 +367,23 @@ mod tests {
             .await
             .expect("revoked key denied"));
 
-        sqlx::query("INSERT INTO rbac_role_permissions(role_id,permission) VALUES ($1,'orders.read')")
-            .bind(role)
-            .execute(&pool)
-            .await
-            .expect("restore role");
+        sqlx::query(
+            "INSERT INTO rbac_role_permissions(role_id,permission) VALUES ($1,'orders.read')",
+        )
+        .bind(role)
+        .execute(&pool)
+        .await
+        .expect("restore role");
         let expiring = issue(&pool, actor, &tenant, "short", &scopes, 1)
             .await
             .expect("short-lived key");
-        sqlx::query("UPDATE api_keys SET expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1")
-            .bind(expiring.id)
-            .execute(&pool)
-            .await
-            .expect("expire");
+        sqlx::query(
+            "UPDATE api_keys SET expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1",
+        )
+        .bind(expiring.id)
+        .execute(&pool)
+        .await
+        .expect("expire");
         assert!(authenticate(&pool, &expiring.token)
             .await
             .expect("expired")
