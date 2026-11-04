@@ -136,15 +136,14 @@ mod tests {
         .await
         .expect("record contextual event");
 
-        let row: (i64, String, Option<String>, Option<String>, Option<String>) =
-            sqlx::query_as(
-                "SELECT id, actor_kind, actor_id, tenant_id, request_id \
+        let row: (i64, String, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT id, actor_kind, actor_id, tenant_id, request_id \
                  FROM audit_events WHERE resource_type = 'actor_context_regression' \
                  AND resource_id = 'within_tx' ORDER BY id DESC LIMIT 1",
-            )
-            .fetch_one(&mut *tx)
-            .await
-            .expect("read uncommitted event");
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .expect("read uncommitted event");
         assert_eq!(row.1, "user");
         assert_eq!(row.2.as_deref(), Some("verified-user"));
         assert_eq!(row.3.as_deref(), Some("tenant-1"));
@@ -154,9 +153,9 @@ mod tests {
         let persisted: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM audit_events WHERE id = $1)")
                 .bind(row.0)
-            .fetch_one(&pool)
-            .await
-            .expect("read after rollback");
+                .fetch_one(&pool)
+                .await
+                .expect("read after rollback");
         assert!(!persisted);
     }
 
