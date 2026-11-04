@@ -182,6 +182,10 @@ pub async fn reserve_inbound(
 }
 
 #[cfg(test)]
+#[path = "webhook_tests.rs"]
+mod integration_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
