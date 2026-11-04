@@ -105,6 +105,10 @@ static AUTH_HTTP_FILES: &[ModuleFile] = &[
             "../../../modules/auth_http/20261104000006_create_identity_outbox.sql"
         ),
     },
+    ModuleFile {
+        path: "migrations/20261104000007_outbox_key_version.sql",
+        source: include_str!("../../../modules/auth_http/20261104000007_outbox_key_version.sql"),
+    },
 ];
 
 static OWNED_RECORDS_FILES: &[ModuleFile] = &[
@@ -635,6 +639,10 @@ mod tests {
         assert!(project
             .0
             .join("migrations/20261104000006_create_identity_outbox.sql")
+            .is_file());
+        assert!(project
+            .0
+            .join("migrations/20261104000007_outbox_key_version.sql")
             .is_file());
         let manifest = fs::read_to_string(project.0.join("Cargo.toml")).expect("manifest");
         assert!(manifest.contains("chacha20poly1305"));

@@ -105,6 +105,7 @@ jobs:
           test -f "$RUNNER_TEMP/db_api/src/modules/auth_http.rs"
           test -f "$RUNNER_TEMP/db_api/src/modules/identity_outbox.rs"
           test -f "$RUNNER_TEMP/db_api/migrations/20261104000006_create_identity_outbox.sql"
+          test -f "$RUNNER_TEMP/db_api/migrations/20261104000007_outbox_key_version.sql"
           test -f "$RUNNER_TEMP/db_api/migrations/20261104000004_create_identity_http.sql"
           test -f "$RUNNER_TEMP/db_api/src/modules/auth.rs"
           test -f "$RUNNER_TEMP/db_api/src/modules/permissions.rs"

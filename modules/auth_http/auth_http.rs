@@ -38,9 +38,9 @@ pub type TokenDelivery = Arc<dyn Fn(&'static str, String, String) -> DeliveryFut
 pub struct IdentityState {
     pub pool: PgPool,
     pub deliver: TokenDelivery,
-    /// 32 random bytes loaded from an external secret manager; never checked in.
-    /// Use the same key in the HTTP service and all email workers.
-    pub outbox_key: Arc<[u8; 32]>,
+    /// Versioned, externally managed encryption keys shared by the API
+    /// and workers. Previous keys are decrypt-only until the backlog drains.
+    pub outbox_keys: Arc<identity_outbox::OutboxKeyring>,
 }
 
 #[derive(Deserialize)]
@@ -208,7 +208,7 @@ async fn queue_token(
     purpose: &'static str,
     ttl_minutes: i64,
 ) -> HttpResult<()> {
-    identity_outbox::enqueue(tx, user_id, purpose, ttl_minutes, &state.outbox_key)
+    identity_outbox::enqueue(tx, user_id, purpose, ttl_minutes, &state.outbox_keys)
         .await
         .map_err(|error| {
             tracing::error!(%error, "failed to enqueue identity email");
@@ -484,7 +484,10 @@ mod tests {
             IdentityState {
                 pool,
                 deliver,
-                outbox_key: Arc::new([42_u8; 32]),
+                outbox_keys: Arc::new(
+                    identity_outbox::OutboxKeyring::new("legacy", [42_u8; 32], [])
+                        .expect("test encryption keys"),
+                ),
             },
             deliveries,
         ))
@@ -520,7 +523,7 @@ mod tests {
 
         assert!(identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
@@ -556,7 +559,7 @@ mod tests {
         );
         assert!(identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
@@ -581,6 +584,162 @@ mod tests {
             .await,
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[tokio::test]
+    async fn wrong_key_material_never_consumes_delivery_retries_or_ciphertext() {
+        let Some((state, deliveries)) = setup().await else {
+            return;
+        };
+        let email = test_email();
+        let registration =
+            format!(r#"{{"email":"{email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", registration).await,
+            StatusCode::ACCEPTED
+        );
+
+        let incorrect = identity_outbox::OutboxKeyring::new("legacy", [99_u8; 32], [])
+            .expect("wrong material, valid ID");
+        assert!(matches!(
+            identity_outbox::send_next_for_email(&state.pool, &incorrect, &state.deliver, &email,)
+                .await,
+            Err(identity_outbox::OutboxError::Crypto)
+        ));
+
+        let (attempts, bytes, dead): (i32, i32, bool) = sqlx::query_as(
+            "SELECT o.attempts, octet_length(o.ciphertext), o.dead_at IS NOT NULL \
+             FROM auth_http_outbox o \
+             JOIN auth_users u ON u.id = o.user_id \
+             WHERE lower(u.email) = $1",
+        )
+        .bind(&email)
+        .fetch_one(&state.pool)
+        .await
+        .expect("retained encrypted payload");
+        assert_eq!(attempts, 0);
+        assert!(bytes > 0);
+        assert!(!dead);
+        assert!(deliveries.lock().expect("deliveries").is_empty());
+
+        sqlx::query(
+            "UPDATE auth_http_outbox o \
+             SET available_at = clock_timestamp() - INTERVAL '1 second' \
+             FROM auth_users u WHERE u.id = o.user_id AND lower(u.email) = $1",
+        )
+        .bind(&email)
+        .execute(&state.pool)
+        .await
+        .expect("retry after recovering key");
+        assert!(identity_outbox::send_next_for_email(
+            &state.pool,
+            &state.outbox_keys,
+            &state.deliver,
+            &email,
+        )
+        .await
+        .expect("recovered encryption key"));
+        assert_eq!(deliveries.lock().expect("deliveries").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn key_rotation_preserves_queued_legacy_messages_without_losing_attempts() {
+        let Some((mut state, deliveries)) = setup().await else {
+            return;
+        };
+        let old_email = test_email();
+        let old_body =
+            format!(r#"{{"email":"{old_email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", old_body).await,
+            StatusCode::ACCEPTED
+        );
+
+        // A worker deployed without the previous key must fail closed before
+        // it changes the queued message's attempt count.
+        let new_only =
+            identity_outbox::OutboxKeyring::new("v2", [43_u8; 32], []).expect("new-only keyring");
+        assert!(matches!(
+            identity_outbox::send_next_for_email(
+                &state.pool,
+                &new_only,
+                &state.deliver,
+                &old_email,
+            )
+            .await,
+            Err(identity_outbox::OutboxError::MissingKey)
+        ));
+        let attempts: i32 = sqlx::query_scalar(
+            "SELECT o.attempts FROM auth_http_outbox o \
+             JOIN auth_users u ON u.id = o.user_id WHERE lower(u.email) = $1",
+        )
+        .bind(&old_email)
+        .fetch_one(&state.pool)
+        .await
+        .expect("outbox attempts");
+        assert_eq!(attempts, 0);
+
+        state.outbox_keys = Arc::new(
+            identity_outbox::OutboxKeyring::new(
+                "v2",
+                [43_u8; 32],
+                [("legacy".to_owned(), [42_u8; 32])],
+            )
+            .expect("rotated keyring"),
+        );
+        let new_email = test_email();
+        let new_body =
+            format!(r#"{{"email":"{new_email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", new_body).await,
+            StatusCode::ACCEPTED
+        );
+
+        for (email, expected_key) in [(&old_email, "legacy"), (&new_email, "v2")] {
+            let stored_id: String = sqlx::query_scalar(
+                "SELECT o.encryption_key_id FROM auth_http_outbox o \
+                 JOIN auth_users u ON u.id = o.user_id WHERE lower(u.email) = $1",
+            )
+            .bind(email)
+            .fetch_one(&state.pool)
+            .await
+            .expect("stored key version");
+            assert_eq!(stored_id, expected_key);
+            assert!(identity_outbox::send_next_for_email(
+                &state.pool,
+                &state.outbox_keys,
+                &state.deliver,
+                email,
+            )
+            .await
+            .expect("mail delivered"));
+        }
+
+        assert_eq!(deliveries.lock().expect("delivered messages").len(), 2);
+        // Scope assertions to the two test identities. Other PostgreSQL
+        // integration tests run in parallel and share the same database.
+        for email in [&old_email, &new_email] {
+            let outstanding: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*)::BIGINT FROM auth_http_outbox o \
+                 JOIN auth_users u ON u.id = o.user_id \
+                 WHERE lower(u.email) = $1 AND o.delivered_at IS NULL \
+                   AND o.dead_at IS NULL AND octet_length(o.ciphertext) > 0",
+            )
+            .bind(email)
+            .fetch_one(&state.pool)
+            .await
+            .expect("test identity pending backlog");
+            assert_eq!(outstanding, 0);
+        }
+        // A new-only worker can now process future work for the new key.
+        assert!(!identity_outbox::send_next_for_email(
+            &state.pool,
+            &new_only,
+            &state.deliver,
+            &old_email,
+        )
+        .await
+        .expect("retired old key after drain"));
     }
 
     #[tokio::test]
@@ -625,7 +784,7 @@ mod tests {
 
         assert!(identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
@@ -651,7 +810,7 @@ mod tests {
         .expect("enable retry");
         assert!(identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
@@ -686,13 +845,13 @@ mod tests {
         let (first, second) = tokio::join!(
             identity_outbox::send_next_for_email(
                 &state.pool,
-                &state.outbox_key,
+                &state.outbox_keys,
                 &state.deliver,
                 &email,
             ),
             identity_outbox::send_next_for_email(
                 &state.pool,
-                &state.outbox_key,
+                &state.outbox_keys,
                 &state.deliver,
                 &email,
             )
@@ -803,7 +962,7 @@ mod tests {
         assert_eq!(ciphertext_size, 0);
         assert!(!identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
