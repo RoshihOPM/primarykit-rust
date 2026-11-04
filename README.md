@@ -28,6 +28,7 @@ PrimaryKit keeps the generated service independent from the generator.
     cargo run -p primarykit -- add audit --project ./inventory_api
     cargo run -p primarykit -- add permissions --project ./inventory_api
     cargo run -p primarykit -- add auth_http --project ./inventory_api
+    cargo run -p primarykit -- add tasks --project ./inventory_api
     cargo run -p primarykit -- add webhooks --project ./inventory_api
 
 The second command installs both pagination and its api_errors dependency.
@@ -57,7 +58,7 @@ graceful shutdown, and a non-root Docker runtime.
 
 Early bootstrap. The optional postgres template includes PostgreSQL, SQLx
 migrations, and database readiness. The module catalog includes validation, pagination, audit, authentication
-with optional HTTP flows, tenant RBAC, tenant API keys, SMTP integration and a durable webhook
+with optional HTTP flows, tenant RBAC, tenant API keys, SMTP integration, RabbitMQ tasks and a durable webhook
 inbox/outbox. Components are opt-in and intended for independent Axum services.
 Production security still requires deployment-specific network limits,
 secret management, provider verification and operational review.
@@ -90,3 +91,9 @@ records replay protection in PostgreSQL transactions and provides a leased
 outbox worker with retries. It does not enable routes or arbitrary HTTP
 callbacks automatically. See [module docs](docs/modules.md) for security
 requirements and integration rules.
+
+The optional `tasks` module connects to RabbitMQ as a separate supervised
+worker with broker-confirmed durable messages, bounded retries and a dead-letter
+queue. Production must provide an `amqps://` broker and idempotent handlers:
+a task and a PostgreSQL transaction are not automatically atomic. See
+[portable module operations](docs/modules.md).
