@@ -716,18 +716,21 @@ mod tests {
         }
 
         assert_eq!(deliveries.lock().expect("delivered messages").len(), 2);
-        assert_eq!(
-            identity_outbox::encrypted_pending_for_key(&state.pool, "legacy")
-                .await
-                .expect("old backlog"),
-            0
-        );
-        assert_eq!(
-            identity_outbox::encrypted_pending_for_key(&state.pool, "v2")
-                .await
-                .expect("current backlog"),
-            0
-        );
+        // Scope assertions to the two test identities. Other PostgreSQL
+        // integration tests run in parallel and share the same database.
+        for email in [&old_email, &new_email] {
+            let outstanding: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*)::BIGINT FROM auth_http_outbox o \
+                 JOIN auth_users u ON u.id = o.user_id \
+                 WHERE lower(u.email) = $1 AND o.delivered_at IS NULL \
+                   AND o.dead_at IS NULL AND octet_length(o.ciphertext) > 0",
+            )
+            .bind(email)
+            .fetch_one(&state.pool)
+            .await
+            .expect("test identity pending backlog");
+            assert_eq!(outstanding, 0);
+        }
         // A new-only worker can now process future work for the new key.
         assert!(!identity_outbox::send_next_for_email(
             &state.pool,
