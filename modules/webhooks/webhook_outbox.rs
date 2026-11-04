@@ -293,9 +293,10 @@ mod shutdown_tests {
     #[tokio::test]
     async fn shutdown_interrupts_worker_backoff() {
         let (sender, mut receiver) = watch::channel(false);
-        let waiting = tokio::spawn(async move {
-            wait_or_shutdown(&mut receiver, Duration::from_secs(30)).await
-        });
+        let waiting =
+            tokio::spawn(
+                async move { wait_or_shutdown(&mut receiver, Duration::from_secs(30)).await },
+            );
         tokio::task::yield_now().await;
         sender.send(true).expect("worker receiver alive");
         assert!(tokio::time::timeout(Duration::from_secs(1), waiting)
