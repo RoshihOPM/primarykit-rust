@@ -67,6 +67,10 @@ static AUDIT_FILES: &[ModuleFile] = &[
         path: "migrations/20261104000010_audit_append_only.sql",
         source: include_str!("../../../modules/audit/20261104000010_audit_append_only.sql"),
     },
+    ModuleFile {
+        path: "migrations/20261104000011_audit_actor_context.sql",
+        source: include_str!("../../../modules/audit/20261104000011_audit_actor_context.sql"),
+    },
 ];
 
 static AUTH_FILES: &[ModuleFile] = &[
@@ -664,6 +668,10 @@ mod tests {
         assert!(project
             .0
             .join("migrations/20261103000001_create_audit_events.sql")
+            .is_file());
+        assert!(project
+            .0
+            .join("migrations/20261104000011_audit_actor_context.sql")
             .is_file());
     }
 
