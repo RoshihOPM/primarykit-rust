@@ -587,6 +587,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn key_rotation_preserves_queued_legacy_messages_without_losing_attempts() {
+        let Some((mut state, deliveries)) = setup().await else {
+            return;
+        };
+        let old_email = test_email();
+        let old_body =
+            format!(r#"{{"email":"{old_email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", old_body).await,
+            StatusCode::ACCEPTED
+        );
+
+        // A worker deployed without the previous key must fail closed before
+        // it changes the queued message's attempt count.
+        let new_only =
+            identity_outbox::OutboxKeyring::new("v2", [43_u8; 32], [])
+                .expect("new-only keyring");
+        assert!(matches!(
+            identity_outbox::send_next_for_email(
+                &state.pool,
+                &new_only,
+                &state.deliver,
+                &old_email,
+            )
+            .await,
+            Err(identity_outbox::OutboxError::MissingKey)
+        ));
+        let attempts: i32 = sqlx::query_scalar(
+            "SELECT o.attempts FROM auth_http_outbox o \
+             JOIN auth_users u ON u.id = o.user_id WHERE lower(u.email) = $1",
+        )
+        .bind(&old_email)
+        .fetch_one(&state.pool)
+        .await
+        .expect("outbox attempts");
+        assert_eq!(attempts, 0);
+
+        state.outbox_keys = Arc::new(
+            identity_outbox::OutboxKeyring::new(
+                "v2",
+                [43_u8; 32],
+                [("legacy".to_owned(), [42_u8; 32])],
+            )
+            .expect("rotated keyring"),
+        );
+        let new_email = test_email();
+        let new_body =
+            format!(r#"{{"email":"{new_email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", new_body).await,
+            StatusCode::ACCEPTED
+        );
+
+        for (email, expected_key) in [(&old_email, "legacy"), (&new_email, "v2")] {
+            let stored_id: String = sqlx::query_scalar(
+                "SELECT o.encryption_key_id FROM auth_http_outbox o \
+                 JOIN auth_users u ON u.id = o.user_id WHERE lower(u.email) = $1",
+            )
+            .bind(email)
+            .fetch_one(&state.pool)
+            .await
+            .expect("stored key version");
+            assert_eq!(stored_id, expected_key);
+            assert!(
+                identity_outbox::send_next_for_email(
+                    &state.pool,
+                    &state.outbox_keys,
+                    &state.deliver,
+                    email,
+                )
+                .await
+                .expect("mail delivered")
+            );
+        }
+
+        assert_eq!(deliveries.lock().expect("delivered messages").len(), 2);
+        assert_eq!(
+            identity_outbox::encrypted_pending_for_key(&state.pool, "legacy")
+                .await
+                .expect("old backlog"),
+            0
+        );
+        assert_eq!(
+            identity_outbox::encrypted_pending_for_key(&state.pool, "v2")
+                .await
+                .expect("current backlog"),
+            0
+        );
+        // A new-only worker can now process future work for the new key.
+        assert!(!identity_outbox::send_next_for_email(
+            &state.pool,
+            &new_only,
+            &state.deliver,
+            &old_email,
+        )
+        .await
+        .expect("retired old key after drain"));
+    }
+
+    #[tokio::test]
     async fn outbox_retries_then_erases_encrypted_payload_on_success() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
