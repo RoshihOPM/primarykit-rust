@@ -39,8 +39,7 @@ async fn inbound_receipt_rolls_back_and_rejects_conflicting_payloads() {
     let source = unique("provider");
     let id = unique("inbound");
     let tag = sign(KEY, &source, &id, 1_800_000_000, b"original").expect("sign");
-    let event = verify(KEY, &source, &id, &tag, b"original", 1_800_000_005)
-        .expect("verify");
+    let event = verify(KEY, &source, &id, &tag, b"original", 1_800_000_005).expect("verify");
     let mut tx = pool.begin().await.expect("begin");
     assert_eq!(
         reserve_inbound(&mut tx, &event).await.expect("reserve"),
@@ -50,7 +49,9 @@ async fn inbound_receipt_rolls_back_and_rejects_conflicting_payloads() {
 
     let mut tx = pool.begin().await.expect("begin");
     assert_eq!(
-        reserve_inbound(&mut tx, &event).await.expect("reserve again"),
+        reserve_inbound(&mut tx, &event)
+            .await
+            .expect("reserve again"),
         DedupResult::Inserted
     );
     tx.commit().await.expect("commit");
@@ -78,13 +79,10 @@ async fn concurrent_inbound_events_are_processed_once() {
     let source = unique("source");
     let id = unique("concurrent");
     let tag = sign(KEY, &source, &id, 1_800_000_000, b"body").expect("sign");
-    let verified = verify(KEY, &source, &id, &tag, b"body", 1_800_000_010)
-        .expect("verify");
+    let verified = verify(KEY, &source, &id, &tag, b"body", 1_800_000_010).expect("verify");
     let process = || async {
         let mut tx = pool.begin().await.expect("begin");
-        let result = reserve_inbound(&mut tx, &verified)
-            .await
-            .expect("reserve");
+        let result = reserve_inbound(&mut tx, &verified).await.expect("reserve");
         tx.commit().await.expect("commit");
         result
     };
@@ -132,8 +130,8 @@ async fn outgoing_failures_retry_then_scrub_payload() {
                 .duration_since(UNIX_EPOCH)
                 .expect("clock")
                 .as_secs() as i64;
-            let _verified = verify(KEY, &_dest, &_id, &header, &body, now)
-                .expect("valid outgoing signature");
+            let _verified =
+                verify(KEY, &_dest, &_id, &header, &body, now).expect("valid outgoing signature");
             if counter.fetch_add(1, Ordering::SeqCst) == 0 {
                 Err(())
             } else {
@@ -141,11 +139,9 @@ async fn outgoing_failures_retry_then_scrub_payload() {
             }
         })
     });
-    assert!(
-        outbox::send_next_to(&pool, &keys, &delivery, &destination)
-            .await
-            .expect("first attempt")
-    );
+    assert!(outbox::send_next_to(&pool, &keys, &delivery, &destination)
+        .await
+        .expect("first attempt"));
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
     sqlx::query(
         "UPDATE webhook_outbox SET available_at=clock_timestamp() - INTERVAL '1 second' \
@@ -156,17 +152,13 @@ async fn outgoing_failures_retry_then_scrub_payload() {
     .execute(&pool)
     .await
     .expect("make retry due");
-    assert!(
-        outbox::send_next_to(&pool, &keys, &delivery, &destination)
-            .await
-            .expect("second attempt")
-    );
+    assert!(outbox::send_next_to(&pool, &keys, &delivery, &destination)
+        .await
+        .expect("second attempt"));
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
-    assert!(
-        !outbox::send_next_to(&pool, &keys, &delivery, &destination)
-            .await
-            .expect("already sent")
-    );
+    assert!(!outbox::send_next_to(&pool, &keys, &delivery, &destination)
+        .await
+        .expect("already sent"));
     let (sent, size): (bool, i32) = sqlx::query_as(
         "SELECT delivered_at IS NOT NULL, octet_length(payload) FROM webhook_outbox \
          WHERE destination=$1 AND event_id=$2",
@@ -191,8 +183,7 @@ async fn unknown_destination_preserves_attempts_and_secret_is_not_stored() {
         .await
         .expect("enqueue");
     tx.commit().await.expect("commit");
-    let delivery: outbox::WebhookDelivery =
-        Arc::new(|_, _, _, _| Box::pin(async { Ok(()) }));
+    let delivery: outbox::WebhookDelivery = Arc::new(|_, _, _, _| Box::pin(async { Ok(()) }));
     assert!(matches!(
         outbox::send_next_to(&pool, &BTreeMap::new(), &delivery, &dest).await,
         Err(WebhookError::MissingDestination)
