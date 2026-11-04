@@ -4,7 +4,7 @@
 //! or a production secret manager. Never log tokens, credentials or URLs
 //! containing verification/reset fragments.
 
-use super::auth_http::TokenDelivery;
+use super::auth_http::{identity_outbox::OutboxKeyring, TokenDelivery};
 use lettre::{
     message::{header::ContentType, Mailbox},
     transport::smtp::authentication::Credentials,
@@ -171,14 +171,45 @@ impl SmtpConfig {
     }
 }
 
-/// Load a 256-bit ChaCha20-Poly1305 key from an external, protected secret.
-/// Never print the key or commit it to environment example files.
-pub fn outbox_key_from_env() -> Result<Arc<[u8; 32]>, SmtpConfigError> {
-    let value = env::var("IDENTITY_OUTBOX_KEY_HEX")
-        .map_err(|_| SmtpConfigError::Missing("IDENTITY_OUTBOX_KEY_HEX"))?;
+fn decode_key_hex(value: &str) -> Result<[u8; 32], SmtpConfigError> {
+    if value.len() != 64 {
+        return Err(SmtpConfigError::OutboxKey);
+    }
     let bytes = hex::decode(value).map_err(|_| SmtpConfigError::OutboxKey)?;
-    let key: [u8; 32] = bytes.try_into().map_err(|_| SmtpConfigError::OutboxKey)?;
-    Ok(Arc::new(key))
+    bytes.try_into().map_err(|_| SmtpConfigError::OutboxKey)
+}
+
+/// Parse the active key and any decrypt-only previous keys. The previous
+/// format is a comma-separated list of ID=64hex entries, without whitespace.
+fn parse_outbox_keys(
+    active_id: &str,
+    active_hex: &str,
+    previous_spec: &str,
+) -> Result<Arc<OutboxKeyring>, SmtpConfigError> {
+    let mut previous = Vec::new();
+    if !previous_spec.is_empty() {
+        for entry in previous_spec.split(',') {
+            let (id, value) = entry.split_once('=').ok_or(SmtpConfigError::OutboxKey)?;
+            previous.push((id.to_owned(), decode_key_hex(value)?));
+        }
+    }
+    let ring = OutboxKeyring::new(active_id, decode_key_hex(active_hex)?, previous)
+        .map_err(|_| SmtpConfigError::OutboxKey)?;
+    Ok(Arc::new(ring))
+}
+
+/// Load versioned encryption keys from environment. ID defaults to "legacy"
+/// to support deployments upgrading from the original unversioned key.
+/// A rotation sets a *new* ID and active key, then lists older keys under
+/// IDENTITY_OUTBOX_PREVIOUS_KEYS="legacy=<old-hex>,v2=<older-hex>".
+/// Do not log the values of any encryption variables.
+pub fn outbox_keys_from_env() -> Result<Arc<OutboxKeyring>, SmtpConfigError> {
+    let active_id = env::var("IDENTITY_OUTBOX_KEY_ID")
+        .unwrap_or_else(|_| "legacy".to_owned());
+    let active_key = env::var("IDENTITY_OUTBOX_KEY_HEX")
+        .map_err(|_| SmtpConfigError::Missing("IDENTITY_OUTBOX_KEY_HEX"))?;
+    let previous = env::var("IDENTITY_OUTBOX_PREVIOUS_KEYS").unwrap_or_default();
+    parse_outbox_keys(&active_id, &active_key, &previous)
 }
 
 #[cfg(test)]
@@ -194,6 +225,21 @@ mod tests {
             "https://app.example.org/".to_owned(),
         )
         .expect("test configuration")
+    }
+
+    #[test]
+    fn versioned_outbox_key_configuration_rejects_malformed_or_duplicate_keys() {
+        let initial = "11".repeat(32);
+        let older = "22".repeat(32);
+        let keys = parse_outbox_keys("v2", &initial, &format!("legacy={older}"))
+            .expect("valid active and previous keys");
+        assert_eq!(keys.active_id(), "v2");
+        assert!(parse_outbox_keys("v2", &initial, &format!("v2={older}")).is_err());
+        assert!(parse_outbox_keys("invalid id", &initial, "").is_err());
+        assert!(parse_outbox_keys("v2", "invalid", "").is_err());
+        assert!(parse_outbox_keys("v2", &initial, "legacy=invalid").is_err());
+        assert!(parse_outbox_keys("v2", &initial, "legacy=invalid,").is_err());
+        assert!(parse_outbox_keys("v2", &initial, &format!("legacy={older},legacy={older}")).is_err());
     }
 
     #[test]
