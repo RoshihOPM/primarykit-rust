@@ -93,7 +93,9 @@ static OWNED_RECORDS_FILES: &[ModuleFile] = &[
     },
     ModuleFile {
         path: "migrations/20261104000005_create_owned_records.sql",
-        source: include_str!("../../../modules/owned_records/20261104000005_create_owned_records.sql"),
+        source: include_str!(
+            "../../../modules/owned_records/20261104000005_create_owned_records.sql"
+        ),
     },
 ];
 

@@ -68,8 +68,8 @@ pub async fn update(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::auth::{authenticate_session, create_session};
+    use super::*;
     use sqlx::postgres::PgPoolOptions;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -91,14 +91,20 @@ mod tests {
         let owner: i64 = sqlx::query_scalar(
             "INSERT INTO auth_users(email, password_hash) VALUES ($1, 'test') RETURNING id",
         )
-        .bind(format!("owner-{}-{suffix}@example.invalid", std::process::id()))
+        .bind(format!(
+            "owner-{}-{suffix}@example.invalid",
+            std::process::id()
+        ))
         .fetch_one(&pool)
         .await
         .expect("owner");
         let intruder: i64 = sqlx::query_scalar(
             "INSERT INTO auth_users(email, password_hash) VALUES ($1, 'test') RETURNING id",
         )
-        .bind(format!("intruder-{}-{suffix}@example.invalid", std::process::id()))
+        .bind(format!(
+            "intruder-{}-{suffix}@example.invalid",
+            std::process::id()
+        ))
         .fetch_one(&pool)
         .await
         .expect("intruder");
@@ -121,11 +127,13 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("role");
-        sqlx::query("INSERT INTO rbac_role_permissions(role_id,permission) VALUES ($1,'records.read')")
-            .bind(role)
-            .execute(&pool)
-            .await
-            .expect("role permission");
+        sqlx::query(
+            "INSERT INTO rbac_role_permissions(role_id,permission) VALUES ($1,'records.read')",
+        )
+        .bind(role)
+        .execute(&pool)
+        .await
+        .expect("role permission");
         for user in [owner, intruder] {
             sqlx::query("INSERT INTO rbac_user_roles(user_id,role_id) VALUES ($1,$2)")
                 .bind(user)
@@ -143,7 +151,14 @@ mod tests {
         .await
         .expect("record");
 
-        assert_eq!(get(&pool, owner_principal, id).await.expect("owner read").expect("found").body, "private");
+        assert_eq!(
+            get(&pool, owner_principal, id)
+                .await
+                .expect("owner read")
+                .expect("found")
+                .body,
+            "private"
+        );
         assert!(get(&pool, intruder_principal, id)
             .await
             .expect("intruder read")
@@ -152,25 +167,37 @@ mod tests {
             .await
             .expect("write denied"));
 
-        sqlx::query("INSERT INTO rbac_role_permissions(role_id,permission) VALUES ($1,'records.write')")
-            .bind(role)
-            .execute(&pool)
-            .await
-            .expect("write grant");
+        sqlx::query(
+            "INSERT INTO rbac_role_permissions(role_id,permission) VALUES ($1,'records.write')",
+        )
+        .bind(role)
+        .execute(&pool)
+        .await
+        .expect("write grant");
         assert!(!update(&pool, intruder_principal, id, "tampered")
             .await
             .expect("intruder write denied"));
         assert!(update(&pool, owner_principal, id, "changed")
             .await
             .expect("owner write"));
-        assert_eq!(get(&pool, owner_principal, id).await.expect("read").expect("record").body, "changed");
+        assert_eq!(
+            get(&pool, owner_principal, id)
+                .await
+                .expect("read")
+                .expect("record")
+                .body,
+            "changed"
+        );
 
         sqlx::query("UPDATE auth_users SET is_active = FALSE WHERE id = $1")
             .bind(owner)
             .execute(&pool)
             .await
             .expect("deactivate owner");
-        assert!(get(&pool, owner_principal, id).await.expect("disabled").is_none());
+        assert!(get(&pool, owner_principal, id)
+            .await
+            .expect("disabled")
+            .is_none());
         assert!(!update(&pool, owner_principal, id, "blocked")
             .await
             .expect("disabled"));
