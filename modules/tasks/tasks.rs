@@ -298,7 +298,10 @@ async fn process(
                 return reject_to_dead_letter(delivery).await;
             }
             message.attempt += 1;
-            let payload = message.encode()?;
+            let payload = match message.encode() {
+                Ok(payload) => payload,
+                Err(_) => return reject_to_dead_letter(delivery).await,
+            };
             if let Err(error) =
                 publish_confirmed(channel, &config.retry_queue(), &message.id, &payload).await
             {
