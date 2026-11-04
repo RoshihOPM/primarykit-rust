@@ -95,6 +95,7 @@ jobs:
         run: |
           cargo run -p primarykit -- new db_api --template postgres --output "$RUNNER_TEMP"
           cargo run -p primarykit -- add audit --project "$RUNNER_TEMP/db_api"
+          test -f "$RUNNER_TEMP/db_api/migrations/20261104000010_audit_append_only.sql"
           cargo run -p primarykit -- add permissions --project "$RUNNER_TEMP/db_api"
           cargo run -p primarykit -- add auth_http --project "$RUNNER_TEMP/db_api"
           cargo run -p primarykit -- add auth_smtp --project "$RUNNER_TEMP/db_api"
