@@ -208,6 +208,47 @@ pub async fn enqueue(
     Ok(())
 }
 
+fn decrypt_token(
+    keys: &OutboxKeyring,
+    key_id: &str,
+    digest: &str,
+    nonce: &[u8],
+    ciphertext: &[u8],
+) -> Option<String> {
+    // Key ID is authenticated for v2 ciphertext. The legacy fallback only
+    // applies to rows migrated from the pre-versioned format.
+    if nonce.len() == 12 {
+        let result = keys.decrypt_key(&key_id).and_then(|key| {
+            let authenticated_data = aad(&key_id, &digest);
+            cipher(key)
+                .decrypt(
+                    Nonce::from_slice(&nonce),
+                    Payload {
+                        msg: &ciphertext,
+                        aad: &authenticated_data,
+                    },
+                )
+                .or_else(|_| {
+                    if key_id == LEGACY_KEY_ID {
+                        cipher(key).decrypt(
+                            Nonce::from_slice(&nonce),
+                            Payload {
+                                msg: &ciphertext,
+                                aad: digest.as_bytes(),
+                            },
+                        )
+                    } else {
+                        Err(chacha20poly1305::aead::Error)
+                    }
+                })
+                .ok()
+        });
+        result.and_then(|bytes| String::from_utf8(bytes).ok())
+    } else {
+        None
+    }
+}
+
 type Claimed = (i64, String, String, String, Vec<u8>, Vec<u8>, i32, String);
 
 async fn send_filtered(
@@ -252,38 +293,7 @@ async fn send_filtered(
         return Ok(false);
     };
 
-    // Key ID is authenticated for v2 ciphertext. The legacy fallback only
-    // applies to rows migrated from the pre-versioned format.
-    let token = if nonce.len() == 12 {
-        let result = keys.decrypt_key(&key_id).and_then(|key| {
-            let authenticated_data = aad(&key_id, &digest);
-            cipher(key)
-                .decrypt(
-                    Nonce::from_slice(&nonce),
-                    Payload {
-                        msg: &ciphertext,
-                        aad: &authenticated_data,
-                    },
-                )
-                .or_else(|_| {
-                    if key_id == LEGACY_KEY_ID {
-                        cipher(key).decrypt(
-                            Nonce::from_slice(&nonce),
-                            Payload {
-                                msg: &ciphertext,
-                                aad: digest.as_bytes(),
-                            },
-                        )
-                    } else {
-                        Err(chacha20poly1305::aead::Error)
-                    }
-                })
-                .ok()
-        });
-        result.and_then(|bytes| String::from_utf8(bytes).ok())
-    } else {
-        None
-    };
+    let token = decrypt_token(keys, &key_id, &digest, &nonce, &ciphertext);
     let delivery_result = if let Some(token) = token {
         let kind: &'static str = if purpose == "verify" {
             "verify"
@@ -481,5 +491,67 @@ pub async fn run_worker(
         if shutdown.has_changed().is_err() || *shutdown.borrow_and_update() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod keyring_tests {
+    use super::*;
+
+    #[test]
+    fn decrypts_pre_versioned_legacy_payloads_without_weakening_new_aad() {
+        let key = [42_u8; 32];
+        let keys = OutboxKeyring::new(
+            "v2",
+            [43_u8; 32],
+            [("legacy".to_owned(), key)],
+        )
+        .expect("keyring");
+        let plaintext = "a".repeat(64);
+        let digest = hash_token(&plaintext);
+        let nonce = [11_u8; 12];
+
+        // Old deployments authenticated only the SHA-256 token digest.
+        let old = cipher(&key)
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: plaintext.as_bytes(),
+                    aad: digest.as_bytes(),
+                },
+            )
+            .expect("legacy encryption");
+        assert_eq!(
+            decrypt_token(&keys, "legacy", &digest, &nonce, &old),
+            Some(plaintext.clone())
+        );
+        assert_eq!(decrypt_token(&keys, "v2", &digest, &nonce, &old), None);
+
+        // New ciphertext authenticates the key ID as well as the digest.
+        let new_aad = aad("v2", &digest);
+        let current = cipher(keys.active_key())
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: plaintext.as_bytes(),
+                    aad: &new_aad,
+                },
+            )
+            .expect("new encryption");
+        assert_eq!(
+            decrypt_token(&keys, "v2", &digest, &nonce, &current),
+            Some(plaintext)
+        );
+        assert_eq!(
+            decrypt_token(&keys, "legacy", &digest, &nonce, &current),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_and_duplicate_ids() {
+        assert!(OutboxKeyring::new("v2", [1; 32], [("v2".to_owned(), [2; 32])]).is_err());
+        assert!(OutboxKeyring::new("bad id", [1; 32], []).is_err());
+        assert!(OutboxKeyring::new("", [1; 32], []).is_err());
     }
 }
