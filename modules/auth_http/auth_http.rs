@@ -587,6 +587,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wrong_key_material_never_consumes_delivery_retries_or_ciphertext() {
+        let Some((state, deliveries)) = setup().await else {
+            return;
+        };
+        let email = test_email();
+        let registration =
+            format!(r#"{{"email":"{email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", registration).await,
+            StatusCode::ACCEPTED
+        );
+
+        let incorrect = identity_outbox::OutboxKeyring::new(
+            "legacy",
+            [99_u8; 32],
+            [],
+        )
+        .expect("wrong material, valid ID");
+        assert!(matches!(
+            identity_outbox::send_next_for_email(
+                &state.pool,
+                &incorrect,
+                &state.deliver,
+                &email,
+            )
+            .await,
+            Err(identity_outbox::OutboxError::Crypto)
+        ));
+
+        let (attempts, bytes, dead): (i32, i32, bool) = sqlx::query_as(
+            "SELECT o.attempts, octet_length(o.ciphertext), o.dead_at IS NOT NULL \
+             FROM auth_http_outbox o \
+             JOIN auth_users u ON u.id = o.user_id \
+             WHERE lower(u.email) = $1",
+        )
+        .bind(&email)
+        .fetch_one(&state.pool)
+        .await
+        .expect("retained encrypted payload");
+        assert_eq!(attempts, 0);
+        assert!(bytes > 0);
+        assert!(!dead);
+        assert!(deliveries.lock().expect("deliveries").is_empty());
+
+        sqlx::query(
+            "UPDATE auth_http_outbox o \
+             SET available_at = clock_timestamp() - INTERVAL '1 second' \
+             FROM auth_users u WHERE u.id = o.user_id AND lower(u.email) = $1",
+        )
+        .bind(&email)
+        .execute(&state.pool)
+        .await
+        .expect("retry after recovering key");
+        assert!(
+            identity_outbox::send_next_for_email(
+                &state.pool,
+                &state.outbox_keys,
+                &state.deliver,
+                &email,
+            )
+            .await
+            .expect("recovered encryption key")
+        );
+        assert_eq!(deliveries.lock().expect("deliveries").len(), 1);
+    }
+
+    #[tokio::test]
     async fn key_rotation_preserves_queued_legacy_messages_without_losing_attempts() {
         let Some((mut state, deliveries)) = setup().await else {
             return;
