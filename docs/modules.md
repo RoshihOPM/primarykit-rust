@@ -27,6 +27,7 @@ api_errors. audit is only valid with the PostgreSQL template.
 | auth_smtp | postgres | auth_http | TLS-only SMTP delivery callback |
 | owned_records | postgres | permissions | Tenant and owner-aware SQL access |
 | webhooks | postgres | none | Signed inbound webhook receipts and durable outbound delivery |
+| tasks | basic / postgres | none | Durable RabbitMQ worker with retries, DLQ and shutdown |
 
 In a generated application's Rust code, import items through the library
 crate's public modules, for example:
@@ -317,3 +318,48 @@ use an Authorization header behind TLS, and implement client-level limits.
 This is a portable backend module, not a complete HTTP key-management API.
 Applications must build their own audit trail, authorization middleware and
 administration UX; do not grant tenant-wide access based solely on key format.
+
+## RabbitMQ tasks (opt-in)
+
+Install `tasks` in an independent basic or PostgreSQL Axum project:
+
+    primarykit add tasks --project ./app_api
+
+The host constructs `tasks::TaskConfig::new("orders")`, creates a RabbitMQ
+connection with `tasks::connect(url, false)`, then creates separate AMQP
+channels for publishing and consuming. Run `tasks::declare(&channel, &config)`
+on each channel before using `tasks::enqueue` or `tasks::run_worker`.
+Only `amqps://` connections are accepted by default. The `true` option
+permits **only loopback** plaintext `amqp://` for local integration tests.
+
+The module declares durable `orders`, `orders.retry` and `orders.dead`
+queues. Messages use delivery mode 2 and **mandatory publisher confirms**:
+unroutable or unconfirmed publications are errors, not successes. A worker
+acknowledges only after handler success or broker-confirmed retry enqueue.
+Transient failures and timeouts get up to five attempts by default, via a
+30-second TTL retry queue. Malformed messages, permanent failures and exhausted
+retries are rejected into a dead-letter queue. A failed retry publication
+requeues the original delivery and fails the worker so its supervisor can
+restart it rather than spinning indefinitely.
+
+Each message has a stable UUID across retries. Processing is **at least once**:
+ack loss, reconnects or confirmed retry republishing can duplicate side
+effects. The application MUST apply an idempotency key in the same PostgreSQL
+transaction as its business writes, or implement equivalent transactional
+deduplication in its own storage. A publisher call is **not** atomic with
+PostgreSQL commits; use a transactional outbox when both need to succeed.
+Do not assume that a RabbitMQ publish after a database write cannot be lost.
+
+`run_worker` processes one task at a time per AMQP channel with bounded
+payloads (128 KiB), configurable handler timeout and graceful shutdown after
+the active task. Scale with additional worker channels/processes. Supervise
+workers, alert on DLQ depth and stale queues, ensure termination grace exceeds
+the configured handler timeout, and use dedicated broker permissions/vhosts.
+Message bodies are plaintext within RabbitMQ; apply TLS, least privilege and
+data minimization. Retry queue topology (TTL/DLX) cannot be silently modified
+after declaration: plan migration when changing it.
+
+A generated project does not automatically run a consumer or configure a
+RabbitMQ account. Deployment must provide broker credentials, TLS validation,
+queue monitoring and worker lifecycle management. Integration tests run
+against `AMQP_URL` when set; CI provisions an ephemeral RabbitMQ instance.
