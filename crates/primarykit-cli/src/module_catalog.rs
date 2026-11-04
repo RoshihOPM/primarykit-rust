@@ -129,6 +129,25 @@ static AUTH_SMTP_FILES: &[ModuleFile] = &[ModuleFile {
     source: include_str!("../../../modules/auth_smtp/auth_smtp.rs"),
 }];
 
+static WEBHOOK_FILES: &[ModuleFile] = &[
+    ModuleFile {
+        path: "src/modules/webhooks.rs",
+        source: include_str!("../../../modules/webhooks/webhooks.rs"),
+    },
+    ModuleFile {
+        path: "src/modules/webhook_outbox.rs",
+        source: include_str!("../../../modules/webhooks/webhook_outbox.rs"),
+    },
+    ModuleFile {
+        path: "src/modules/webhook_tests.rs",
+        source: include_str!("../../../modules/webhooks/webhook_tests.rs"),
+    },
+    ModuleFile {
+        path: "migrations/20261104000009_create_webhooks.sql",
+        source: include_str!("../../../modules/webhooks/20261104000009_create_webhooks.sql"),
+    },
+];
+
 pub static MODULES: &[ModuleInfo] = &[
     ModuleInfo {
         name: "api_errors",
@@ -194,6 +213,19 @@ pub static MODULES: &[ModuleInfo] = &[
             "url = \"2.5\"",
         ],
         files: AUTH_SMTP_FILES,
+    },
+    ModuleInfo {
+        name: "webhooks",
+        description: "HMAC webhooks, transactional replay protection and durable signed delivery",
+        dependencies: &[],
+        requires_postgres: true,
+        cargo_dependencies: &[
+            "hex = \"0.4\"",
+            "hmac = \"0.12\"",
+            "sha2 = \"0.10\"",
+            "thiserror = \"2\"",
+        ],
+        files: WEBHOOK_FILES,
     },
     ModuleInfo {
         name: "owned_records",
@@ -678,6 +710,30 @@ mod tests {
         let project = TempProject::new("basic");
         assert!(install_module(&project.0, "auth_smtp").is_err());
         assert!(!project.0.join("src/modules/auth_smtp.rs").exists());
+    }
+
+    #[test]
+    fn installs_portable_webhooks_with_postgres_migration() {
+        let project = TempProject::new("postgres");
+        let added = install_module(&project.0, "webhooks").expect("install");
+        assert_eq!(added, ["webhooks"]);
+        assert!(project.0.join("src/modules/webhooks.rs").is_file());
+        assert!(project.0.join("src/modules/webhook_outbox.rs").is_file());
+        assert!(project.0.join("src/modules/webhook_tests.rs").is_file());
+        assert!(project
+            .0
+            .join("migrations/20261104000009_create_webhooks.sql")
+            .is_file());
+        let manifest = fs::read_to_string(project.0.join("Cargo.toml")).expect("manifest");
+        assert!(manifest.contains("hmac = \"0.12\""));
+        assert!(manifest.contains("thiserror = \"2\""));
+    }
+
+    #[test]
+    fn webhooks_rejects_basic_template() {
+        let project = TempProject::new("basic");
+        assert!(install_module(&project.0, "webhooks").is_err());
+        assert!(!project.0.join("src/modules/webhooks.rs").exists());
     }
 
     #[test]
