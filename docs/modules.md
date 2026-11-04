@@ -19,7 +19,7 @@ api_errors. audit is only valid with the PostgreSQL template.
 |---|---|---|---|
 | api_errors | basic / postgres | none | Typed safe JSON HTTP error responses |
 | pagination | basic / postgres | api_errors | Validated page/per_page and SQL offsets |
-| audit | postgres | none | Transactional PostgreSQL audit event writer and migration |
+| audit | postgres | none | Transactional audit writer with append-only PostgreSQL triggers |
 | auth | postgres | none | Argon2id passwords, opaque revocable/rotating sessions |
 | permissions | postgres | auth | Tenant-scoped deny-by-default RBAC |
 | auth_http | postgres | auth | Identity API with encrypted transactional outbox |
@@ -36,11 +36,17 @@ The installer does not inject HTTP routes or run arbitrary module scripts.
 Applications wire exported functions into their own business logic.
 
 For the audit module, business changes and audit writes must share an SQLx
-transaction. Run the SQLx migrations before using audit, and commit only
-when both writes succeed. The migration includes an index for resource
-history. The schema does NOT prevent privileged SQL users from updating
-or deleting rows: immutable storage requires separate database privileges,
-policies and retention design.
+transaction. Run both versioned SQLx migrations before using audit, and commit
+only when both writes succeed. The resource-history index supports lookups;
+the second migration rejects UPDATE, DELETE and TRUNCATE with SQLSTATE 42501.
+
+This is **append-only protection, not tamper-proof storage**: PostgreSQL table
+owners and superusers can disable/drop triggers, and a compromised privileged
+connection can modify history. Use separate migration and application database
+roles, prohibit application DDL, audit privileged changes externally, and define
+a retention/partitioning policy before the table grows without bound. Existing
+deployments must apply the additive migration; never rewrite an applied SQLx
+migration checksum.
 
 ## Safety policy
 
