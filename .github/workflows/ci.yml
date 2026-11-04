@@ -17,7 +17,19 @@ jobs:
   validate:
     name: Format, lint, test and build
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
+    services:
+      rabbitmq:
+        image: rabbitmq:4.1-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      AMQP_URL: amqp://guest:guest@127.0.0.1:5672/%2f
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -48,6 +60,9 @@ jobs:
           cargo run -p primarykit -- new smoke_api --output "$RUNNER_TEMP"
           cargo run -p primarykit -- modules
           cargo run -p primarykit -- add pagination --project "$RUNNER_TEMP/smoke_api"
+          cargo run -p primarykit -- add tasks --project "$RUNNER_TEMP/smoke_api"
+          test -f "$RUNNER_TEMP/smoke_api/src/modules/tasks.rs"
+          test -f "$RUNNER_TEMP/smoke_api/src/modules/tasks_tests.rs"
           test -f "$RUNNER_TEMP/smoke_api/src/modules/api_errors.rs"
           test -f "$RUNNER_TEMP/smoke_api/src/modules/pagination.rs"
           cd "$RUNNER_TEMP/smoke_api"
