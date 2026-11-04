@@ -14,8 +14,12 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use std::{future::Future, pin::Pin, sync::Arc};
-use tokio::task;
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, OnceLock},
+};
+use tokio::{sync::Semaphore, task};
 
 const SESSION_TTL: i64 = 60 * 60 * 24;
 const RESET_TTL_MINUTES: i64 = 15;
@@ -155,15 +159,34 @@ fn internal(error: sqlx::Error) -> StatusCode {
     StatusCode::INTERNAL_SERVER_ERROR
 }
 
+fn argon2_slots() -> Arc<Semaphore> {
+    // A cancelled request must not release its slot while a blocking hash
+    // is still running. The blocking closure owns the permit.
+    static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    Arc::clone(SLOTS.get_or_init(|| Arc::new(Semaphore::new(4))))
+}
+
 async fn secure_hash(password: String) -> HttpResult<String> {
-    task::spawn_blocking(move || auth::hash_password(&password))
+    let permit = argon2_slots()
+        .acquire_owned()
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .map_err(|_| StatusCode::BAD_REQUEST)
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    task::spawn_blocking(move || {
+        let _permit = permit;
+        auth::hash_password(&password)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::BAD_REQUEST)
 }
 
 async fn password_matches(password: String, hash: Option<String>) -> HttpResult<bool> {
+    let permit = argon2_slots()
+        .acquire_owned()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     task::spawn_blocking(move || {
+        let _permit = permit;
         match hash {
             Some(hash) => auth::verify_password(&password, &hash),
             None => {
@@ -303,18 +326,20 @@ async fn login(
     .await
     .map_err(internal)?;
     let verified = password_matches(input.password, user.as_ref().map(|u| u.1.clone())).await?;
-    let Some((user_id, _, true)) = user else {
+    let Some((user_id, saved_hash, true)) = user else {
         return Err(StatusCode::UNAUTHORIZED);
     };
     if !verified {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let token = auth::create_session(&state.pool, user_id, SESSION_TTL)
-        .await
-        .map_err(|error| {
-            tracing::warn!(error = %error, "session creation rejected");
-            StatusCode::UNAUTHORIZED
-        })?;
+    let token =
+        auth::create_session_if_password_unchanged(&state.pool, user_id, &saved_hash, SESSION_TTL)
+            .await
+            .map_err(|error| {
+                tracing::error!(error = %error, "session persistence failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+            .ok_or(StatusCode::UNAUTHORIZED)?;
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CACHE_CONTROL,

@@ -147,3 +147,16 @@ This is a reference implementation: real applications must embed equivalent
 predicates into their own domain queries and decide whether a role grants
 access beyond the owner. Do not treat a separate \`has_permission\` call
 followed by an unguarded resource update as safe.
+
+
+### Memory and password-reset concurrency
+
+Argon2 password operations are bounded to four concurrent blocking workers
+per server process. Workers retain semaphore permits until hashing completes,
+even when HTTP requests are cancelled. Deploy independent network-edge
+throttling and measure queue latency before exposing login publicly.
+
+After verifying a password, session creation rechecks the exact verified
+password hash under a PostgreSQL row lock. A concurrent password reset either
+revokes the newly committed session or changes the password first, preventing
+issuance of a session using superseded credentials.
