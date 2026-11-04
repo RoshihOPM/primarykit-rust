@@ -15,8 +15,12 @@ async fn broker_setup() -> Option<(Connection, Channel, Channel, TaskConfig)> {
     let mut config = TaskConfig::new(format!("pk_test_{}", Uuid::new_v4().simple()));
     config.retry_delay_ms = 100;
     config.handler_timeout = Duration::from_secs(3);
-    declare(&producer, &config).await.expect("publisher topology");
-    declare(&consumer, &config).await.expect("consumer topology");
+    declare(&producer, &config)
+        .await
+        .expect("publisher topology");
+    declare(&consumer, &config)
+        .await
+        .expect("consumer topology");
     Some((connection, producer, consumer, config))
 }
 
@@ -78,20 +82,29 @@ async fn transient_failure_retries_with_stable_task_id_and_graceful_shutdown() {
         })
     });
     let worker_config = config.clone();
-    let running = tokio::spawn(async move {
-        run_worker(&consumer, &worker_config, &handler, shutdown_rx).await
-    });
+    let running =
+        tokio::spawn(
+            async move { run_worker(&consumer, &worker_config, &handler, shutdown_rx).await },
+        );
 
-    let published_id = enqueue(&producer, &config, "email.send", json!({"recipient": "test"}))
-        .await
-        .expect("publish confirmed");
+    let published_id = enqueue(
+        &producer,
+        &config,
+        "email.send",
+        json!({"recipient": "test"}),
+    )
+    .await
+    .expect("publish confirmed");
     timeout(Duration::from_secs(15), running)
         .await
         .expect("worker completes after retry")
         .expect("join worker")
         .expect("worker succeeded");
     assert_eq!(seen.load(Ordering::SeqCst), 2);
-    assert_eq!(expected_id.lock().await.as_deref(), Some(published_id.as_str()));
+    assert_eq!(
+        expected_id.lock().await.as_deref(),
+        Some(published_id.as_str())
+    );
 }
 
 #[tokio::test]
@@ -108,9 +121,10 @@ async fn permanent_failure_is_dead_lettered_without_retry() {
         })
     });
     let worker_config = config.clone();
-    let running = tokio::spawn(async move {
-        run_worker(&consumer, &worker_config, &handler, shutdown_rx).await
-    });
+    let running =
+        tokio::spawn(
+            async move { run_worker(&consumer, &worker_config, &handler, shutdown_rx).await },
+        );
     let id = enqueue(&producer, &config, "unrecoverable", json!({}))
         .await
         .expect("published");
