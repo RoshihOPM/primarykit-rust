@@ -4,13 +4,14 @@
 //! database-backed per-identity limiter.
 
 use super::auth;
+#[path = "identity_outbox.rs"]
+pub mod identity_outbox;
 use axum::{
     extract::{DefaultBodyLimit, State},
     http::{header, HeaderMap, StatusCode},
     routing::post,
     Json, Router,
 };
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -37,6 +38,9 @@ pub type TokenDelivery = Arc<dyn Fn(&'static str, String, String) -> DeliveryFut
 pub struct IdentityState {
     pub pool: PgPool,
     pub deliver: TokenDelivery,
+    /// 32 random bytes loaded from an external secret manager; never checked in.
+    /// Use the same key in the HTTP service and all email workers.
+    pub outbox_key: Arc<[u8; 32]>,
 }
 
 #[derive(Deserialize)]
@@ -119,14 +123,6 @@ fn sha256(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 
-fn opaque_token() -> Result<String, StatusCode> {
-    let mut bytes = [0_u8; 32];
-    OsRng
-        .try_fill_bytes(&mut bytes)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(hex::encode(bytes))
-}
-
 fn token_syntax(token: &str) -> bool {
     token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -203,32 +199,21 @@ async fn password_matches(password: String, hash: Option<String>) -> HttpResult<
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-async fn enqueue_token(
+// Outbox persistence and token creation occur within the caller transaction.
+// Neither a partial registration nor a token lacking a delivery job is committed.
+async fn queue_token(
     state: &IdentityState,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     user_id: i64,
-    email: String,
     purpose: &'static str,
     ttl_minutes: i64,
 ) -> HttpResult<()> {
-    let token = opaque_token()?;
-    sqlx::query(
-        "INSERT INTO auth_http_one_time_tokens (token_hash, user_id, purpose, expires_at) \
-         VALUES ($1, $2, $3, clock_timestamp() + ($4::BIGINT * INTERVAL '1 minute'))",
-    )
-    .bind(sha256(&token))
-    .bind(user_id)
-    .bind(purpose)
-    .bind(ttl_minutes)
-    .execute(&state.pool)
-    .await
-    .map_err(internal)?;
-
-    // A delivery failure does not reveal whether the email exists. The
-    // application must supply reliable delivery, retry and monitoring.
-    if (state.deliver)(purpose, email, token).await.is_err() {
-        tracing::error!(purpose, "identity token delivery failed");
-    }
-    Ok(())
+    identity_outbox::enqueue(tx, user_id, purpose, ttl_minutes, &state.outbox_key)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to enqueue identity email");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
 }
 
 /// Registration creates an INACTIVE identity. An email-verification token
@@ -245,13 +230,14 @@ async fn register(
         return Ok(StatusCode::ACCEPTED);
     }
     let password_hash = secure_hash(input.password).await?;
+    let mut tx = state.pool.begin().await.map_err(internal)?;
     let new_id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO auth_users (email, password_hash, is_active) \
          VALUES ($1, $2, FALSE) ON CONFLICT DO NOTHING RETURNING id",
     )
     .bind(&email)
     .bind(password_hash)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(internal)?;
     // Re-send verification for existing pending identities, not active users.
@@ -266,8 +252,9 @@ async fn register(
         .map_err(internal)?,
     };
     if let Some(id) = candidate_id {
-        enqueue_token(&state, id, email, "verify", VERIFY_TTL_MINUTES).await?;
+        queue_token(&state, &mut tx, id, "verify", VERIFY_TTL_MINUTES).await?;
     }
+    tx.commit().await.map_err(internal)?;
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -398,15 +385,17 @@ async fn request_reset(
     if !allow_attempt(&state.pool, "reset", &email).await? {
         return Ok(StatusCode::ACCEPTED);
     }
+    let mut tx = state.pool.begin().await.map_err(internal)?;
     let user_id: Option<i64> =
         sqlx::query_scalar("SELECT id FROM auth_users WHERE lower(email) = $1 AND is_active")
             .bind(&email)
-            .fetch_optional(&state.pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(internal)?;
     if let Some(id) = user_id {
-        enqueue_token(&state, id, email, "reset", RESET_TTL_MINUTES).await?;
+        queue_token(&state, &mut tx, id, "reset", RESET_TTL_MINUTES).await?;
     }
+    tx.commit().await.map_err(internal)?;
     Ok(StatusCode::ACCEPTED)
 }
 
@@ -491,7 +480,14 @@ mod tests {
                 .push((purpose.to_owned(), email, token));
             Box::pin(async { Ok(()) })
         });
-        Some((IdentityState { pool, deliver }, deliveries))
+        Some((
+            IdentityState {
+                pool,
+                deliver,
+                outbox_key: Arc::new([42_u8; 32]),
+            },
+            deliveries,
+        ))
     }
 
     async fn post(state: &IdentityState, uri: &str, payload: String) -> StatusCode {
@@ -522,6 +518,14 @@ mod tests {
             StatusCode::ACCEPTED
         );
 
+        assert!(identity_outbox::send_next_for_email(
+            &state.pool,
+            &state.outbox_key,
+            &state.deliver,
+            &email,
+        )
+        .await
+        .expect("delivery"));
         let verify_token = deliveries.lock().expect("deliveries")[0].2.clone();
         assert_eq!(
             post(
@@ -550,6 +554,14 @@ mod tests {
             .await,
             StatusCode::ACCEPTED
         );
+        assert!(identity_outbox::send_next_for_email(
+            &state.pool,
+            &state.outbox_key,
+            &state.deliver,
+            &email,
+        )
+        .await
+        .expect("delivery"));
         let reset_token = deliveries.lock().expect("deliveries")[1].2.clone();
         assert_eq!(
             post(
