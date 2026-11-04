@@ -22,6 +22,9 @@ api_errors. audit is only valid with the PostgreSQL template.
 | audit | postgres | none | Transactional PostgreSQL audit event writer and migration |
 | auth | postgres | none | Argon2id passwords, opaque revocable/rotating sessions |
 | permissions | postgres | auth | Tenant-scoped deny-by-default RBAC |
+| auth_http | postgres | auth | Identity API with encrypted transactional outbox |
+| auth_smtp | postgres | auth_http | TLS-only SMTP delivery callback |
+| owned_records | postgres | permissions | Tenant and owner-aware SQL access |
 
 In a generated application's Rust code, import items through the library
 crate's public modules, for example:
@@ -182,3 +185,48 @@ After verifying a password, session creation rechecks the exact verified
 password hash under a PostgreSQL row lock. A concurrent password reset either
 revokes the newly committed session or changes the password first, preventing
 issuance of a session using superseded credentials.
+
+## Production SMTP adapter
+
+Install `auth_smtp` into an Axum/PostgreSQL project to add an optional
+TLS-only SMTP provider callback compatible with the transactional identity
+outbox:
+
+    primarykit add auth_smtp --project ./db_api
+
+Configure `SMTP_RELAY_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+`SMTP_FROM`, `IDENTITY_PUBLIC_ORIGIN` (HTTPS origin without a path), and
+`IDENTITY_OUTBOX_KEY_HEX` (a separately generated 32-byte key encoded as
+64 hexadecimal characters; never commit this secret). The adapter requires
+SMTP TLS via certificate-verified SMTPS on port 465. No plaintext or
+opportunistic SMTP downgrade is permitted.
+
+Call `auth_smtp::SmtpConfig::from_env()?.delivery()?` to construct the
+`TokenDelivery` callback. Call `auth_smtp::outbox_key_from_env()?` to
+load the encryption key. Pass both to `auth_http::IdentityState` for
+HTTP routes and to `auth_http::identity_outbox::run_worker` in a **separate
+long-running worker process**. Do not run the worker as part of each request.
+
+The email contains a verification or reset link with the token in the URL
+**fragment**, not the HTTP query string. Your frontend must read that fragment,
+POST the token to `/auth/verify-email` or
+`/auth/password-reset/confirm`, then immediately clear it from browser
+history. Do not log the full URL or leak it to third-party scripts.
+
+Run one to a few worker replicas initially; the PostgreSQL leases avoid
+simultaneous claims. Delivery is at-least-once: if the SMTP server accepts a
+message and the worker crashes before acknowledgement, it might be delivered
+again. Test how your provider handles this and keep the mail content
+idempotent.
+
+`identity_outbox::stats(pool)` reports queued, due, dead-letter counts and
+oldest pending age. Monitor them in an authenticated operations service;
+alert on increasing dead letters or delivery age beyond expected latency.
+`identity_outbox::cleanup_once` scrubs expired/used pending secrets and
+purges old metadata in bounded batches. Pending encrypted messages must be
+drained (or a dual-key reader added) **before rotating**
+`IDENTITY_OUTBOX_KEY_HEX`.
+
+See `docs/identity-operations.md` for a worker integration example and
+Nginx ingress rules. SMTP provider credentials must be provisioned separately;
+this adapter never registers with or configures an external provider.
