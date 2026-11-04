@@ -86,6 +86,17 @@ static PERMISSIONS_FILES: &[ModuleFile] = &[
     },
 ];
 
+static API_KEYS_FILES: &[ModuleFile] = &[
+    ModuleFile {
+        path: "src/modules/api_keys.rs",
+        source: include_str!("../../../modules/api_keys/api_keys.rs"),
+    },
+    ModuleFile {
+        path: "migrations/20261104000008_create_api_keys.sql",
+        source: include_str!("../../../modules/api_keys/20261104000008_create_api_keys.sql"),
+    },
+];
+
 static AUTH_HTTP_FILES: &[ModuleFile] = &[
     ModuleFile {
         path: "src/modules/auth_http.rs",
@@ -175,6 +186,14 @@ pub static MODULES: &[ModuleInfo] = &[
         requires_postgres: true,
         cargo_dependencies: &[],
         files: PERMISSIONS_FILES,
+    },
+    ModuleInfo {
+        name: "api_keys",
+        description: "Opaque tenant API keys with expiry, scopes and live RBAC",
+        dependencies: &["permissions"],
+        requires_postgres: true,
+        cargo_dependencies: &[],
+        files: API_KEYS_FILES,
     },
     ModuleInfo {
         name: "auth_http",
@@ -678,6 +697,18 @@ mod tests {
         let project = TempProject::new("basic");
         assert!(install_module(&project.0, "auth_smtp").is_err());
         assert!(!project.0.join("src/modules/auth_smtp.rs").exists());
+    }
+
+    #[test]
+    fn api_keys_install_auth_and_permissions() {
+        let project = TempProject::new("postgres");
+        let added = install_module(&project.0, "api_keys").expect("install");
+        assert_eq!(added, ["auth", "permissions", "api_keys"]);
+        assert!(project.0.join("src/modules/api_keys.rs").is_file());
+        assert!(project
+            .0
+            .join("migrations/20261104000008_create_api_keys.sql")
+            .is_file());
     }
 
     #[test]

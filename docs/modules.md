@@ -232,3 +232,29 @@ previous keys until no encrypted pending rows use them. Read
 See `docs/identity-operations.md` for a worker integration example and
 Nginx ingress rules. SMTP provider credentials must be provisioned separately;
 this adapter never registers with or configures an external provider.
+
+## API keys (tenant-scoped)
+
+The optional `api_keys` module depends on `permissions` and `auth`:
+
+    primarykit add api_keys --project ./db_api
+
+An authenticated user may issue a 256-bit opaque API key for a tenant only
+when current RBAC grants `api_keys.create` AND each requested scope.
+The returned bearer token is disclosed once; PostgreSQL stores only its
+SHA-256 digest. Scopes must be distinct, cannot contain wildcards, and must
+match explicit tenant permissions. Key expiry is capped at 90 days.
+
+`authenticate(pool, token)` resolves a typed, non-forgeable principal.
+`allows(pool, &principal, permission)` rechecks the saved scopes, live RBAC,
+expiry, revocation and user activation on every use. Revoking a role therefore
+removes key access immediately. Simply checking the token once and trusting
+a requested permission is unsafe.
+
+The owner may revoke a key while active. Other users need `api_keys.revoke`
+in the same tenant. Do not include API tokens in URLs, logs or analytics;
+use an Authorization header behind TLS, and implement client-level limits.
+
+This is a portable backend module, not a complete HTTP key-management API.
+Applications must build their own audit trail, authorization middleware and
+administration UX; do not grant tenant-wide access based solely on key format.
