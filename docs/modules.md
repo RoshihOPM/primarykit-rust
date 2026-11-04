@@ -118,11 +118,33 @@ explicit proxy trust configuration. Password hashing/verification is moved
 to Tokio's blocking thread pool. Keep its concurrency bounded by operational
 policy to avoid CPU and memory exhaustion.
 
-Delivery errors are logged without secrets and exposed as generic 202
-responses; integrate a reliable email provider with retries and monitoring.
-A background task should remove expired/used one-time tokens and old
-rate-limit rows. This module is a starting point and requires an application
-security review before public deployment.
+Identity emails are committed to an encrypted PostgreSQL transactional outbox
+at the same time as the one-time token. Delivery happens **after commit**, not
+inside HTTP requests. The generated project's IdentityState requires an
+\`outbox_key: Arc<[u8; 32]>\` loaded from a deployment secret manager. Use
+independently generated random 32-byte keys (never hard-code test keys in
+production); share them with all HTTP replicas and delivery workers. Keys
+are not stored in PostgreSQL. Draining pending messages or implementing
+dual-key decryption is necessary before rotating an existing key.
+
+Run \`auth_http::identity_outbox::run_worker(pool, key, deliver, shutdown)\` as
+a separate long-lived Tokio task/process. The callback is still provided
+by the host application and must send the mail with a trusted HTTPS reset/
+verify URL and bounded network timeouts. The queue uses row leases with
+\`FOR UPDATE SKIP LOCKED\`, bounded exponential retries and dead-letter
+states. **Delivery is at least once:** if a worker crashes after the provider
+accepted an email but before acknowledgement, the email can be delivered
+again. The provider integration should support idempotency where available.
+After successful delivery the encrypted token payload is erased from its
+outbox row; the one-time token hash remains until retention cleanup.
+
+The worker also invokes \`cleanup_once\` to remove stale counters, expired
+tokens, and old sessions in bounded batches. Monitor dead rows, lag, retry
+counts, missing email deliveries, and key validity.
+
+This module remains **not fully production-ready**: configure TLS, network
+edge/IP rate limiting, email retry policies, operational alerts and a threat
+model before exposing it publicly.
 
 ## Example object-level authorization
 

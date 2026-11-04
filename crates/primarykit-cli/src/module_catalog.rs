@@ -95,6 +95,14 @@ static AUTH_HTTP_FILES: &[ModuleFile] = &[
         path: "migrations/20261104000004_create_identity_http.sql",
         source: include_str!("../../../modules/auth_http/20261104000004_create_identity_http.sql"),
     },
+    ModuleFile {
+        path: "src/modules/identity_outbox.rs",
+        source: include_str!("../../../modules/auth_http/identity_outbox.rs"),
+    },
+    ModuleFile {
+        path: "migrations/20261104000006_create_identity_outbox.sql",
+        source: include_str!("../../../modules/auth_http/20261104000006_create_identity_outbox.sql"),
+    },
 ];
 
 static OWNED_RECORDS_FILES: &[ModuleFile] = &[
@@ -159,10 +167,10 @@ pub static MODULES: &[ModuleInfo] = &[
     },
     ModuleInfo {
         name: "auth_http",
-        description: "Opt-in HTTP registration, login and password reset with database throttling",
+        description: "Identity API, encrypted transactional email outbox and rate limiting",
         dependencies: &["auth"],
         requires_postgres: true,
-        cargo_dependencies: &[],
+        cargo_dependencies: &["chacha20poly1305 = \"0.10\""],
         files: AUTH_HTTP_FILES,
     },
     ModuleInfo {
@@ -600,11 +608,18 @@ mod tests {
         let installed = install_module(&project.0, "auth_http").expect("install");
         assert_eq!(installed, ["auth", "auth_http"]);
         assert!(project.0.join("src/modules/auth_http.rs").is_file());
+        assert!(project.0.join("src/modules/identity_outbox.rs").is_file());
         assert!(project.0.join("src/modules/auth.rs").is_file());
         assert!(project
             .0
             .join("migrations/20261104000004_create_identity_http.sql")
             .is_file());
+        assert!(project
+            .0
+            .join("migrations/20261104000006_create_identity_outbox.sql")
+            .is_file());
+        let manifest = fs::read_to_string(project.0.join("Cargo.toml")).expect("manifest");
+        assert!(manifest.contains("chacha20poly1305"));
     }
 
     #[test]
