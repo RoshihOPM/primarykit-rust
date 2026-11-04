@@ -298,21 +298,33 @@ async fn send_filtered(
         return Ok(false);
     };
 
-    let token = decrypt_token(keys, &key_id, &digest, &nonce, &ciphertext);
-    let delivery_result = if let Some(token) = token {
-        let kind: &'static str = if purpose == "verify" {
-            "verify"
-        } else {
-            "reset"
-        };
-        timeout(SEND_TIMEOUT, (deliver)(kind, email, token))
-            .await
-            .map(|result| result.is_ok())
-            .unwrap_or(false)
-    } else {
-        tracing::error!(outbox_id = id, "unable to decrypt identity email");
-        false
+    // Wrong key material, lost keys or corrupted ciphertext are NOT SMTP
+    // failures. Preserve the encrypted payload and retry budget so operators
+    // can recover by restoring the correct key configuration.
+    let Some(token) = decrypt_token(keys, &key_id, &digest, &nonce, &ciphertext) else {
+        sqlx::query(
+            "UPDATE auth_http_outbox SET locked_until = NULL, \
+               attempts = GREATEST(attempts - 1, 0), \
+               available_at = clock_timestamp() + INTERVAL '2 minutes' \
+             WHERE id = $1 AND attempts = $2 AND delivered_at IS NULL",
+        )
+        .bind(id)
+        .bind(attempt)
+        .execute(pool)
+        .await?;
+        tracing::error!(outbox_id = id, key_id = %key_id,
+            "identity email could not be decrypted; retained for key recovery");
+        return Err(OutboxError::Crypto);
     };
+    let kind: &'static str = if purpose == "verify" {
+        "verify"
+    } else {
+        "reset"
+    };
+    let delivery_result = timeout(SEND_TIMEOUT, (deliver)(kind, email, token))
+        .await
+        .map(|result| result.is_ok())
+        .unwrap_or(false);
 
     if delivery_result {
         sqlx::query(
@@ -327,7 +339,7 @@ async fn send_filtered(
     } else {
         // Bounded exponential backoff, max eight tries. A corrupt payload is
         // terminal rather than retrying the same secret indefinitely.
-        let terminal = attempt >= MAX_DELIVERY_ATTEMPTS || nonce.len() != 12;
+        let terminal = attempt >= MAX_DELIVERY_ATTEMPTS;
         sqlx::query(
             "UPDATE auth_http_outbox SET locked_until = NULL, \
              available_at = clock_timestamp() + \
