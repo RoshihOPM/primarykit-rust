@@ -35,3 +35,11 @@ readiness. Do not point tests at a production database.
 The included database user/password is for local development only.
 There is no authorization, permissions layer, or business API yet. Add
 those components before exposing an application to the public internet.
+
+## Optional identity delivery
+
+After installing `auth_smtp`, configure the TLS-only SMTP provider and
+run `auth_http::identity_outbox::run_worker` as a separate process.
+Consult `docs/modules.md` in PrimaryKit for callback setup, key management,
+monitoring, and Nginx rate limiting. These features are never enabled by
+simply generating a service.

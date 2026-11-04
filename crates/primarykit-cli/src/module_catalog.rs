@@ -120,6 +120,11 @@ static OWNED_RECORDS_FILES: &[ModuleFile] = &[
     },
 ];
 
+static AUTH_SMTP_FILES: &[ModuleFile] = &[ModuleFile {
+    path: "src/modules/auth_smtp.rs",
+    source: include_str!("../../../modules/auth_smtp/auth_smtp.rs"),
+}];
+
 pub static MODULES: &[ModuleInfo] = &[
     ModuleInfo {
         name: "api_errors",
@@ -174,6 +179,17 @@ pub static MODULES: &[ModuleInfo] = &[
         requires_postgres: true,
         cargo_dependencies: &["chacha20poly1305 = \"0.10\""],
         files: AUTH_HTTP_FILES,
+    },
+    ModuleInfo {
+        name: "auth_smtp",
+        description: "TLS-only SMTP adapter for the encrypted identity-email outbox",
+        dependencies: &["auth_http"],
+        requires_postgres: true,
+        cargo_dependencies: &[
+            "lettre = { version = \"0.11.23\", default-features = false, features = [\"builder\", \"smtp-transport\", \"tokio1-rustls\", \"ring\", \"webpki-roots\", \"pool\"] }",
+            "url = \"2.5\"",
+        ],
+        files: AUTH_SMTP_FILES,
     },
     ModuleInfo {
         name: "owned_records",
@@ -634,6 +650,26 @@ mod tests {
             .0
             .join("migrations/20261104000005_create_owned_records.sql")
             .is_file());
+    }
+
+    #[test]
+    fn auth_smtp_installs_safely_with_auth_http_dependencies() {
+        let project = TempProject::new("postgres");
+        let installed = install_module(&project.0, "auth_smtp").expect("install smtp adapter");
+        assert_eq!(installed, ["auth", "auth_http", "auth_smtp"]);
+        assert!(project.0.join("src/modules/auth_smtp.rs").is_file());
+        assert!(project.0.join("src/modules/identity_outbox.rs").is_file());
+        let manifest = fs::read_to_string(project.0.join("Cargo.toml")).expect("manifest");
+        assert!(manifest.contains("lettre ="));
+        assert!(manifest.contains("url ="));
+        assert!(manifest.contains("chacha20poly1305 ="));
+    }
+
+    #[test]
+    fn auth_smtp_rejects_basic_projects_without_writing() {
+        let project = TempProject::new("basic");
+        assert!(install_module(&project.0, "auth_smtp").is_err());
+        assert!(!project.0.join("src/modules/auth_smtp.rs").exists());
     }
 
     #[test]
