@@ -223,22 +223,22 @@ fn decrypt_token(
     // Key ID is authenticated for v2 ciphertext. The legacy fallback only
     // applies to rows migrated from the pre-versioned format.
     if nonce.len() == 12 {
-        let result = keys.decrypt_key(&key_id).and_then(|key| {
-            let authenticated_data = aad(&key_id, &digest);
+        let result = keys.decrypt_key(key_id).and_then(|key| {
+            let authenticated_data = aad(key_id, digest);
             cipher(key)
                 .decrypt(
-                    Nonce::from_slice(&nonce),
+                    Nonce::from_slice(nonce),
                     Payload {
-                        msg: &ciphertext,
+                        msg: ciphertext,
                         aad: &authenticated_data,
                     },
                 )
                 .or_else(|_| {
                     if key_id == LEGACY_KEY_ID {
                         cipher(key).decrypt(
-                            Nonce::from_slice(&nonce),
+                            Nonce::from_slice(nonce),
                             Payload {
-                                msg: &ciphertext,
+                                msg: ciphertext,
                                 aad: digest.as_bytes(),
                             },
                         )
