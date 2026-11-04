@@ -174,7 +174,7 @@ pub async fn send_next(
 }
 
 #[cfg(test)]
-async fn send_next_to(
+pub(super) async fn send_next_to(
     pool: &PgPool,
     secrets: &DeliverySecrets,
     delivery: &WebhookDelivery,
