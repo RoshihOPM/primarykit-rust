@@ -43,3 +43,8 @@ run `auth_http::identity_outbox::run_worker` as a separate process.
 Consult `docs/modules.md` in PrimaryKit for callback setup, key management,
 monitoring, and Nginx rate limiting. These features are never enabled by
 simply generating a service.
+
+Versioned encrypted outbox keys can be rotated without draining the entire
+queue. Configure `IDENTITY_OUTBOX_KEY_ID`, `IDENTITY_OUTBOX_KEY_HEX` and
+optional decrypt-only `IDENTITY_OUTBOX_PREVIOUS_KEYS`. Follow the complete
+runbook in `docs/identity-key-rotation.md`; rollout order matters.

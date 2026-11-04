@@ -124,11 +124,12 @@ policy to avoid CPU and memory exhaustion.
 Identity emails are committed to an encrypted PostgreSQL transactional outbox
 at the same time as the one-time token. Delivery happens **after commit**, not
 inside HTTP requests. The generated project's IdentityState requires an
-\`outbox_key: Arc<[u8; 32]>\` loaded from a deployment secret manager. Use
+\`outbox_keys: Arc<OutboxKeyring>\` loaded from a deployment secret manager. Use
 independently generated random 32-byte keys (never hard-code test keys in
 production); share them with all HTTP replicas and delivery workers. Keys
-are not stored in PostgreSQL. Draining pending messages or implementing
-dual-key decryption is necessary before rotating an existing key.
+are not stored in PostgreSQL. All messages are tagged with a key ID and previous keys can decrypt outstanding
+backlog. Existing pre-versioned messages are tagged `legacy` during migration.
+Read `docs/identity-key-rotation.md` before changing the active key.
 
 Run \`auth_http::identity_outbox::run_worker(pool, key, deliver, shutdown)\` as
 a separate long-lived Tokio task/process. The callback is still provided
@@ -196,13 +197,13 @@ outbox:
 
 Configure `SMTP_RELAY_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
 `SMTP_FROM`, `IDENTITY_PUBLIC_ORIGIN` (HTTPS origin without a path), and
-`IDENTITY_OUTBOX_KEY_HEX` (a separately generated 32-byte key encoded as
+`IDENTITY_OUTBOX_KEY_HEX` (active 32-byte key encoded as
 64 hexadecimal characters; never commit this secret). The adapter requires
 SMTP TLS via certificate-verified SMTPS on port 465. No plaintext or
 opportunistic SMTP downgrade is permitted.
 
 Call `auth_smtp::SmtpConfig::from_env()?.delivery()?` to construct the
-`TokenDelivery` callback. Call `auth_smtp::outbox_key_from_env()?` to
+`TokenDelivery` callback. Call `auth_smtp::outbox_keys_from_env()?` to
 load the encryption key. Pass both to `auth_http::IdentityState` for
 HTTP routes and to `auth_http::identity_outbox::run_worker` in a **separate
 long-running worker process**. Do not run the worker as part of each request.
@@ -223,9 +224,10 @@ idempotent.
 oldest pending age. Monitor them in an authenticated operations service;
 alert on increasing dead letters or delivery age beyond expected latency.
 `identity_outbox::cleanup_once` scrubs expired/used pending secrets and
-purges old metadata in bounded batches. Pending encrypted messages must be
-drained (or a dual-key reader added) **before rotating**
-`IDENTITY_OUTBOX_KEY_HEX`.
+purges old metadata in bounded batches. Rotate using
+`IDENTITY_OUTBOX_KEY_ID` and `IDENTITY_OUTBOX_PREVIOUS_KEYS` and retain
+previous keys until no encrypted pending rows use them. Read
+`docs/identity-key-rotation.md` for safe rollout and rollback.
 
 See `docs/identity-operations.md` for a worker integration example and
 Nginx ingress rules. SMTP provider credentials must be provisioned separately;
