@@ -237,6 +237,17 @@ pub async fn cleanup_once(pool: &PgPool) -> Result<u64, sqlx::Error> {
     Ok(inbox + outbox)
 }
 
+/// Interrupt idle/backoff waits when the host requests graceful shutdown.
+async fn wait_or_shutdown(shutdown: &mut watch::Receiver<bool>, delay: Duration) -> bool {
+    if *shutdown.borrow() {
+        return true;
+    }
+    tokio::select! {
+        _ = tokio::time::sleep(delay) => false,
+        changed = shutdown.changed() => changed.is_err() || *shutdown.borrow_and_update(),
+    }
+}
+
 /// Run as a separate supervised process. Delivery is at least once.
 pub async fn run_worker(
     pool: PgPool,
@@ -251,10 +262,16 @@ pub async fn run_worker(
         }
         match send_next(&pool, &secrets, &delivery).await {
             Ok(true) => {}
-            Ok(false) => tokio::time::sleep(Duration::from_secs(2)).await,
+            Ok(false) => {
+                if wait_or_shutdown(&mut shutdown, Duration::from_secs(2)).await {
+                    break;
+                }
+            }
             Err(error) => {
                 tracing::error!(%error, "webhook outbox delivery failed");
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                if wait_or_shutdown(&mut shutdown, Duration::from_secs(5)).await {
+                    break;
+                }
             }
         }
         if tokio::time::Instant::now() >= next_cleanup {
@@ -266,5 +283,30 @@ pub async fn run_worker(
         if shutdown.has_changed().is_err() || *shutdown.borrow_and_update() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_interrupts_worker_backoff() {
+        let (sender, mut receiver) = watch::channel(false);
+        let waiting = tokio::spawn(async move {
+            wait_or_shutdown(&mut receiver, Duration::from_secs(30)).await
+        });
+        tokio::task::yield_now().await;
+        sender.send(true).expect("worker receiver alive");
+        assert!(tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .expect("shutdown must not wait for backoff")
+            .expect("worker task"));
+    }
+
+    #[tokio::test]
+    async fn backoff_expires_without_shutdown() {
+        let (_sender, mut receiver) = watch::channel(false);
+        assert!(!wait_or_shutdown(&mut receiver, Duration::from_millis(1)).await);
     }
 }
