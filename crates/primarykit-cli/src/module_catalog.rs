@@ -163,6 +163,17 @@ static WEBHOOK_FILES: &[ModuleFile] = &[
     },
 ];
 
+static TASK_FILES: &[ModuleFile] = &[
+    ModuleFile {
+        path: "src/modules/tasks.rs",
+        source: include_str!("../../../modules/tasks/tasks.rs"),
+    },
+    ModuleFile {
+        path: "src/modules/tasks_tests.rs",
+        source: include_str!("../../../modules/tasks/tasks_tests.rs"),
+    },
+];
+
 pub static MODULES: &[ModuleInfo] = &[
     ModuleInfo {
         name: "api_errors",
@@ -249,6 +260,20 @@ pub static MODULES: &[ModuleInfo] = &[
             "thiserror = \"2\"",
         ],
         files: WEBHOOK_FILES,
+    },
+    ModuleInfo {
+        name: "tasks",
+        description: "Durable RabbitMQ tasks with ack, retries, dead-lettering and shutdown",
+        dependencies: &[],
+        requires_postgres: false,
+        cargo_dependencies: &[
+            "futures-lite = \"2\"",
+            "lapin = { version = \"4.12\", default-features = false, features = [\"tokio\", \"rustls\", \"rustls--ring\", \"rustls-native-certs\"] }",
+            "serde_json = \"1\"",
+            "thiserror = \"2\"",
+            "uuid = { version = \"1\", features = [\"v4\"] }",
+        ],
+        files: TASK_FILES,
     },
     ModuleInfo {
         name: "owned_records",
@@ -733,6 +758,19 @@ mod tests {
         let project = TempProject::new("basic");
         assert!(install_module(&project.0, "auth_smtp").is_err());
         assert!(!project.0.join("src/modules/auth_smtp.rs").exists());
+    }
+
+    #[test]
+    fn installs_broker_tasks_in_basic_service_without_database() {
+        let project = TempProject::new("basic");
+        let added = install_module(&project.0, "tasks").expect("install");
+        assert_eq!(added, ["tasks"]);
+        assert!(project.0.join("src/modules/tasks.rs").is_file());
+        assert!(project.0.join("src/modules/tasks_tests.rs").is_file());
+        let manifest = fs::read_to_string(project.0.join("Cargo.toml")).expect("manifest");
+        assert!(manifest.contains("lapin ="));
+        assert!(manifest.contains("futures-lite ="));
+        assert!(manifest.contains("serde_json ="));
     }
 
     #[test]
