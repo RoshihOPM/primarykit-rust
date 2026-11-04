@@ -102,18 +102,22 @@ fn aad(key_id: &str, token_hash: &str) -> Vec<u8> {
 
 /// Reject workers that are missing any key for a *currently encrypted*
 /// queued message. This is an operational preflight for key rotation.
-pub async fn ensure_key_coverage(
+async fn ensure_key_coverage_filtered(
     pool: &PgPool,
     keys: &OutboxKeyring,
+    email_filter: Option<&str>,
 ) -> Result<(), OutboxError> {
     let missing: Option<String> = sqlx::query_scalar(
-        "SELECT encryption_key_id FROM auth_http_outbox \
-         WHERE delivered_at IS NULL AND dead_at IS NULL \
-           AND octet_length(ciphertext) > 0 \
-           AND NOT (encryption_key_id = ANY($1::TEXT[])) \
+        "SELECT o.encryption_key_id FROM auth_http_outbox o \
+         JOIN auth_users u ON u.id = o.user_id \
+         WHERE o.delivered_at IS NULL AND o.dead_at IS NULL \
+           AND octet_length(o.ciphertext) > 0 \
+           AND NOT (o.encryption_key_id = ANY($1::TEXT[])) \
+           AND ($2::TEXT IS NULL OR lower(u.email) = $2) \
          LIMIT 1",
     )
     .bind(keys.ids())
+    .bind(email_filter)
     .fetch_optional(pool)
     .await?;
     if let Some(id) = missing {
@@ -121,6 +125,13 @@ pub async fn ensure_key_coverage(
         return Err(OutboxError::MissingKey);
     }
     Ok(())
+}
+
+pub async fn ensure_key_coverage(
+    pool: &PgPool,
+    keys: &OutboxKeyring,
+) -> Result<(), OutboxError> {
+    ensure_key_coverage_filtered(pool, keys, None).await
 }
 
 /// Count all encrypted, undelivered rows using a key before retiring it.
@@ -259,7 +270,7 @@ async fn send_filtered(
 ) -> Result<bool, OutboxError> {
     // Fail closed before claiming work. An unavailable old key must never
     // consume retry attempts or mark queued messages as permanently dead.
-    ensure_key_coverage(pool, keys).await?;
+    ensure_key_coverage_filtered(pool, keys, email_filter).await?;
     // The lease prevents concurrent deliveries. attempt number fences delayed
     // acknowledgements from workers whose lease has expired.
     let item: Option<Claimed> = sqlx::query_as(
