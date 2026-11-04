@@ -28,6 +28,7 @@ PrimaryKit keeps the generated service independent from the generator.
     cargo run -p primarykit -- add audit --project ./inventory_api
     cargo run -p primarykit -- add permissions --project ./inventory_api
     cargo run -p primarykit -- add auth_http --project ./inventory_api
+    cargo run -p primarykit -- add webhooks --project ./inventory_api
 
 The second command installs both pagination and its api_errors dependency.
 The audit module requires a project created with --template postgres.
@@ -55,11 +56,11 @@ graceful shutdown, and a non-root Docker runtime.
 ## Project status
 
 Early bootstrap. The optional postgres template includes PostgreSQL, SQLx
-migrations, and database readiness. The initial module catalog includes api_errors,
-pagination and transaction-scoped audit events. The optional postgres
-template can install `auth` (Argon2id and revocable sessions) and
-`permissions` (tenant-scoped RBAC). Login endpoints, recovery, rate limiting,
-API keys, queues and comprehensive security hardening are NOT implemented yet.
+migrations, and database readiness. The module catalog includes validation, pagination, audit, authentication
+with optional HTTP flows, tenant RBAC, tenant API keys, SMTP integration and a durable webhook
+inbox/outbox. Components are opt-in and intended for independent Axum services.
+Production security still requires deployment-specific network limits,
+secret management, provider verification and operational review.
 
 ## Design principles
 
@@ -83,3 +84,9 @@ does not enable public identity endpoints automatically.
 The optional `owned_records` module demonstrates authorization at the
 object/query level, combining trusted tenant context, ownership and RBAC in
 one PostgreSQL statement. Adapt the pattern to real domain tables.
+
+The optional `webhooks` module signs and verifies raw payloads with HMAC,
+records replay protection in PostgreSQL transactions and provides a leased
+outbox worker with retries. It does not enable routes or arbitrary HTTP
+callbacks automatically. See [module docs](docs/modules.md) for security
+requirements and integration rules.
