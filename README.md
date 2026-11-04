@@ -27,6 +27,7 @@ PrimaryKit keeps the generated service independent from the generator.
     cargo run -p primarykit -- add pagination --project ./inventory_api
     cargo run -p primarykit -- add audit --project ./inventory_api
     cargo run -p primarykit -- add permissions --project ./inventory_api
+    cargo run -p primarykit -- add auth_http --project ./inventory_api
 
 The second command installs both pagination and its api_errors dependency.
 The audit module requires a project created with --template postgres.
@@ -73,6 +74,11 @@ Coding agents must follow [AGENTS.md](AGENTS.md): SOLID, KISS, DRY and YAGNI
 are practical guidelines, together with explicit Rust, security, PostgreSQL
 and CI requirements. The same policy is linked from Claude and Copilot
 instructions. Every change must pass tests on the generated project.
+
+Opt-in `auth_http` provides registration, email verification, login,
+revocation and password-reset HTTP routes. The application must supply a
+reliable email delivery callback and add edge rate limiting; the generator
+does not enable public identity endpoints automatically.
 
 The optional `owned_records` module demonstrates authorization at the
 object/query level, combining trusted tenant context, ownership and RBAC in
