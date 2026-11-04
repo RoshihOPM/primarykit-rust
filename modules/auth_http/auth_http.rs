@@ -749,6 +749,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expired_pending_email_is_scrubbed_and_never_sent() {
+        let Some((state, deliveries)) = setup().await else {
+            return;
+        };
+        let email = test_email();
+        let registration =
+            format!(r#"{{"email":"{email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", registration).await,
+            StatusCode::ACCEPTED
+        );
+        let stats = identity_outbox::stats(&state.pool)
+            .await
+            .expect("outbox statistics");
+        assert!(stats.pending >= 1);
+        assert!(stats.due >= 1);
+        assert!(stats.oldest_pending_seconds >= 0.0);
+
+        let digest: String = sqlx::query_scalar(
+            "SELECT t.token_hash FROM auth_http_one_time_tokens t \
+             JOIN auth_users u ON u.id = t.user_id WHERE lower(u.email) = $1",
+        )
+        .bind(&email)
+        .fetch_one(&state.pool)
+        .await
+        .expect("token digest");
+        sqlx::query(
+            "UPDATE auth_http_one_time_tokens \
+             SET expires_at = clock_timestamp() - INTERVAL '1 second' \
+             WHERE token_hash = $1",
+        )
+        .bind(&digest)
+        .execute(&state.pool)
+        .await
+        .expect("expire token");
+
+        assert!(
+            identity_outbox::cleanup_once(&state.pool)
+                .await
+                .expect("maintenance")
+                >= 1
+        );
+        let (dead, ciphertext_size): (bool, i32) = sqlx::query_as(
+            "SELECT dead_at IS NOT NULL, octet_length(ciphertext) \
+             FROM auth_http_outbox WHERE token_hash = $1",
+        )
+        .bind(digest)
+        .fetch_one(&state.pool)
+        .await
+        .expect("scrubbed record");
+        assert!(dead);
+        assert_eq!(ciphertext_size, 0);
+        assert!(!identity_outbox::send_next_for_email(
+            &state.pool,
+            &state.outbox_key,
+            &state.deliver,
+            &email,
+        )
+        .await
+        .expect("expired delivery skipped"));
+        assert!(deliveries.lock().expect("messages").is_empty());
+    }
+
+    #[tokio::test]
     async fn failed_logins_are_limited_across_requests() {
         let Some((state, _)) = setup().await else {
             return;

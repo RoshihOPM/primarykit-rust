@@ -1,0 +1,13 @@
+# Reference snippets only. Read docs/identity-operations.md before deploying.
+# http { ... }
+limit_req_zone $binary_remote_addr zone=identity_per_ip:10m rate=10r/m;
+
+# server { ... } -- existing HTTPS virtual host
+# location ^~ /auth/ {
+#     limit_req zone=identity_per_ip burst=10 nodelay;
+#     limit_req_status 429;
+#     client_max_body_size 4k;
+#     proxy_pass http://127.0.0.1:8000;
+#     proxy_set_header Host $host;
+#     proxy_set_header X-Forwarded-Proto $scheme;
+# }

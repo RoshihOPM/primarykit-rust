@@ -218,9 +218,60 @@ pub(super) async fn send_next_for_email(
     send_filtered(pool, key, deliver, Some(email)).await
 }
 
+/// Aggregate operational counters. Read these from a secured monitoring
+/// endpoint or metric exporter; they must not be exposed anonymously.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OutboxStats {
+    pub pending: i64,
+    pub due: i64,
+    pub dead: i64,
+    pub oldest_pending_seconds: f64,
+}
+
+pub async fn stats(pool: &PgPool) -> Result<OutboxStats, sqlx::Error> {
+    let (pending, due, dead, oldest_pending_seconds): (i64, i64, i64, f64) =
+        sqlx::query_as(
+            "SELECT \
+               COUNT(*) FILTER(WHERE delivered_at IS NULL AND dead_at IS NULL)::BIGINT, \
+               COUNT(*) FILTER(WHERE delivered_at IS NULL AND dead_at IS NULL \
+                                 AND available_at <= clock_timestamp())::BIGINT, \
+               COUNT(*) FILTER(WHERE dead_at IS NOT NULL)::BIGINT, \
+               GREATEST(0, COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - \
+                 MIN(available_at) FILTER(WHERE delivered_at IS NULL AND dead_at IS NULL))), 0))::FLOAT8 \
+             FROM auth_http_outbox",
+        )
+        .fetch_one(pool)
+        .await?;
+    Ok(OutboxStats {
+        pending,
+        due,
+        dead,
+        oldest_pending_seconds,
+    })
+}
+
 /// Bounded cleanup for stale tokens, rate-limit buckets, expired sessions,
 /// and delivered/dead outbox rows. Call periodically; one pass has a cap.
 pub async fn cleanup_once(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    // Scrub obsolete encrypted secrets promptly rather than retaining them
+    // for the seven-day metadata retention window. Skip active worker leases.
+    let scrubbed = sqlx::query(
+        "WITH obsolete AS ( \
+           SELECT o.id FROM auth_http_outbox o \
+           JOIN auth_http_one_time_tokens t ON t.token_hash = o.token_hash \
+           WHERE o.delivered_at IS NULL AND o.dead_at IS NULL \
+             AND (t.used_at IS NOT NULL OR t.expires_at <= clock_timestamp()) \
+             AND (o.locked_until IS NULL OR o.locked_until < clock_timestamp()) \
+           ORDER BY o.id LIMIT 200 FOR UPDATE OF o SKIP LOCKED \
+         ) \
+         UPDATE auth_http_outbox o SET dead_at = clock_timestamp(), \
+           locked_until = NULL, ciphertext = '\\x'::BYTEA \
+         FROM obsolete WHERE o.id = obsolete.id",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+
     let outbox = sqlx::query(
         "DELETE FROM auth_http_outbox WHERE id IN ( \
          SELECT id FROM auth_http_outbox \
@@ -259,7 +310,7 @@ pub async fn cleanup_once(pool: &PgPool) -> Result<u64, sqlx::Error> {
     .execute(pool)
     .await?
     .rows_affected();
-    Ok(outbox + tokens + limits + sessions)
+    Ok(scrubbed + outbox + tokens + limits + sessions)
 }
 
 /// Run as a dedicated worker process/task. An email provider may deliver
