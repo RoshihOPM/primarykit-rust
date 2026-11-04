@@ -25,6 +25,7 @@ api_errors. audit is only valid with the PostgreSQL template.
 | auth_http | postgres | auth | Identity API with encrypted transactional outbox |
 | auth_smtp | postgres | auth_http | TLS-only SMTP delivery callback |
 | owned_records | postgres | permissions | Tenant and owner-aware SQL access |
+| webhooks | postgres | none | Signed inbound webhook receipts and durable outbound delivery |
 
 In a generated application's Rust code, import items through the library
 crate's public modules, for example:
@@ -232,3 +233,54 @@ previous keys until no encrypted pending rows use them. Read
 See `docs/identity-operations.md` for a worker integration example and
 Nginx ingress rules. SMTP provider credentials must be provisioned separately;
 this adapter never registers with or configures an external provider.
+
+
+## Portable webhooks
+
+Install in a generated PostgreSQL application:
+
+    primarykit add webhooks --project ./db_api
+
+Incoming webhook handlers must obtain a **per-source secret of at least 32
+bytes** from a secret manager and derive source identity from trusted route
+configuration, not an arbitrary unsigned request header. Use
+webhooks::verify(secret, source, event_id, signature, exact_body, now_unix)
+before JSON parsing or any business mutation. The signature header uses
+t=unix_seconds,v1=HMAC-SHA256 and authenticates the timestamp, source ID,
+event ID and the exact request bytes. Reject timestamps outside +/- 5 minutes
+and enforce a 256 KiB body-size limit at the reverse proxy as well as in code.
+
+On successful verification, open a SQLx transaction and call
+webhooks::reserve_inbound(&mut tx, &verified). Only for Inserted should the
+handler perform its domain writes; commit the receipt and all business writes
+in the **same transaction**. A duplicate receipt means already processed.
+An event ID reused for different bytes is a Conflict, not a duplicate.
+If the transaction rolls back, replay protection rolls back with it.
+Retention of inbox receipts defaults to 30 days; increase it if any provider
+retries longer. Duplicate external deliveries are expected.
+
+For outgoing events, call webhooks::outbox::enqueue(tx, configured_destination,
+event_id, raw_body) within the originating domain transaction. This stores
+the payload and stable event ID, **not the destination URL or signing key**.
+Run webhooks::outbox::run_worker as an independent supervised process with
+DeliverySecrets loaded from a secret manager and a WebhookDelivery callback.
+
+The delivery callback receives the configured destination identifier,
+event ID, signed timestamp header and original body. It must resolve the
+destination ID to a **fixed HTTPS allowlist** with DNS/private-address
+protection, avoid redirects, use bounded timeouts and treat only successful
+2xx responses as accepted. Never allow arbitrary user-supplied destination
+URLs. The worker uses PostgreSQL SKIP LOCKED, attempt fencing and bounded
+backoff, scrubs payloads after success or terminal failure, and exposes
+operational counters through outbox::stats. Delivery is **at least once**,
+not exactly once: the receiver must deduplicate event IDs.
+
+A missing destination key pauses delivery without consuming retry budget.
+Alert on dead-letter growth, oldest pending age, wrong credentials,
+connection failures and queue lag. The queue stores **unencrypted payload
+bytes** until completion; restrict PostgreSQL read access and avoid putting
+unnecessary secrets or personal information in messages.
+
+A full HTTP transport, production secret provisioning, broker setup and
+per-provider authentication policies are intentionally application-owned.
+The module never exposes HTTP routes automatically.
