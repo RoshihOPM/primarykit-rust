@@ -13,7 +13,9 @@ Dockerfile, git, a shared .env.example, or process logs):
 - `SMTP_USERNAME` and `SMTP_PASSWORD`: SMTP credentials, not user passwords
 - `SMTP_FROM`: verified sender mailbox (for example `no-reply@example.org`)
 - `IDENTITY_PUBLIC_ORIGIN`: origin such as `https://app.example.org/`
-- `IDENTITY_OUTBOX_KEY_HEX`: 64 hex digits representing 32 random bytes
+- `IDENTITY_OUTBOX_KEY_HEX`: active key, 64 hex digits representing 32 random bytes
+- `IDENTITY_OUTBOX_KEY_ID`: active key identifier (defaults to `legacy` for migration)
+- `IDENTITY_OUTBOX_PREVIOUS_KEYS`: optional comma-separated `ID=64hex` entries, decrypt-only
 - `DATABASE_URL`: PostgreSQL DSN with least privileges
 
 A reset/verification email links to `/reset-password` or `/verify-email`
@@ -28,7 +30,7 @@ Replace `db_api` with the generated crate name:
 ```rust
 use db_api::modules::{
     auth_http::identity_outbox,
-    auth_smtp::{outbox_key_from_env, SmtpConfig},
+    auth_smtp::{outbox_keys_from_env, SmtpConfig},
 };
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
@@ -43,10 +45,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&std::env::var("DATABASE_URL")?)
         .await?;
     let sender = SmtpConfig::from_env()?.delivery()?;
-    let key = outbox_key_from_env()?;
+    let keys = outbox_keys_from_env()?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let work = tokio::spawn(identity_outbox::run_worker(
-        pool, key, sender, shutdown_rx,
+        pool, keys, sender, shutdown_rx,
     ));
 
     tokio::signal::ctrl_c().await?;
@@ -105,9 +107,10 @@ Poll `identity_outbox::stats(pool)` from a secured metrics exporter
 - growing pending backlog with no successful SMTP deliveries
 - failed PostgreSQL connections and exhausted worker pools
 
-For a lost key, queued encrypted tokens cannot be recovered. Rotate keys
-only after the pending queue is empty or implement dual-key decryption and
-key-versioned rows first. Restrict direct database read access to the outbox:
+For a lost key, queued encrypted tokens cannot be recovered. The outbox now
+supports key-versioned messages and previous-key decryption; follow the
+rollout and rollback steps in `docs/identity-key-rotation.md`.
+Never discard an old key while `encrypted_pending_for_key` is nonzero. Restrict direct database read access to the outbox:
 encrypted mail tokens are sensitive even though ciphertext is authenticated.
 
 Run an independent security review before enabling public registration,
