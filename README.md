@@ -73,3 +73,7 @@ Coding agents must follow [AGENTS.md](AGENTS.md): SOLID, KISS, DRY and YAGNI
 are practical guidelines, together with explicit Rust, security, PostgreSQL
 and CI requirements. The same policy is linked from Claude and Copilot
 instructions. Every change must pass tests on the generated project.
+
+The optional `owned_records` module demonstrates authorization at the
+object/query level, combining trusted tenant context, ownership and RBAC in
+one PostgreSQL statement. Adapt the pattern to real domain tables.

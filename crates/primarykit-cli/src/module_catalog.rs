@@ -86,6 +86,17 @@ static PERMISSIONS_FILES: &[ModuleFile] = &[
     },
 ];
 
+static OWNED_RECORDS_FILES: &[ModuleFile] = &[
+    ModuleFile {
+        path: "src/modules/owned_records.rs",
+        source: include_str!("../../../modules/owned_records/owned_records.rs"),
+    },
+    ModuleFile {
+        path: "migrations/20261104000005_create_owned_records.sql",
+        source: include_str!("../../../modules/owned_records/20261104000005_create_owned_records.sql"),
+    },
+];
+
 pub static MODULES: &[ModuleInfo] = &[
     ModuleInfo {
         name: "api_errors",
@@ -132,6 +143,14 @@ pub static MODULES: &[ModuleInfo] = &[
         requires_postgres: true,
         cargo_dependencies: &[],
         files: PERMISSIONS_FILES,
+    },
+    ModuleInfo {
+        name: "owned_records",
+        description: "Sample atomic object-level authorization with tenant RBAC",
+        dependencies: &["permissions"],
+        requires_postgres: true,
+        cargo_dependencies: &[],
+        files: OWNED_RECORDS_FILES,
     },
 ];
 
@@ -552,6 +571,18 @@ mod tests {
         let project = TempProject::new("basic");
         let failure = install_module(&project.0, "auth").expect_err("postgres required");
         assert_eq!(failure.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn installs_owned_records_with_required_rbac_and_auth() {
+        let project = TempProject::new("postgres");
+        let installed = install_module(&project.0, "owned_records").expect("install");
+        assert_eq!(installed, ["auth", "permissions", "owned_records"]);
+        assert!(project.0.join("src/modules/owned_records.rs").is_file());
+        assert!(project
+            .0
+            .join("migrations/20261104000005_create_owned_records.sql")
+            .is_file());
     }
 
     #[test]
