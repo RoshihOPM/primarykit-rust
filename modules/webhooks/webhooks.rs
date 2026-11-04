@@ -34,9 +34,9 @@ pub enum WebhookError {
 
 pub fn valid_id(value: &str) -> bool {
     (1..=128).contains(&value.len())
-        && value.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':')
-        })
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
 }
 
 fn validate(secret: &[u8], source: &str, event_id: &str, body: &[u8]) -> Result<(), WebhookError> {
@@ -194,8 +194,7 @@ mod tests {
     #[test]
     fn signatures_bind_metadata_body_and_timestamp() {
         let body = br#"{"paid":true}"#;
-        let tag = sign(SECRET, "billing", "event-123", 1_800_000_000, body)
-            .expect("sign event");
+        let tag = sign(SECRET, "billing", "event-123", 1_800_000_000, body).expect("sign event");
         let verified = verify(SECRET, "billing", "event-123", &tag, body, 1_800_000_050)
             .expect("verify event");
         assert_eq!(verified.source(), "billing");
@@ -204,10 +203,26 @@ mod tests {
             verify(SECRET, "billing", "event-123", &tag, body, 1_800_000_500),
             Err(WebhookError::Expired)
         ));
-        assert!(verify(SECRET, "billing", "event-123", &tag, br#"{"paid":false}"#, 1_800_000_050).is_err());
+        assert!(verify(
+            SECRET,
+            "billing",
+            "event-123",
+            &tag,
+            br#"{"paid":false}"#,
+            1_800_000_050
+        )
+        .is_err());
         assert!(verify(SECRET, "other", "event-123", &tag, body, 1_800_000_050).is_err());
         assert!(verify(SECRET, "billing", "other", &tag, body, 1_800_000_050).is_err());
-        assert!(verify(SECRET, "billing", "event-123", &format!("{tag},v1=00"), body, 1_800_000_050).is_err());
+        assert!(verify(
+            SECRET,
+            "billing",
+            "event-123",
+            &format!("{tag},v1=00"),
+            body,
+            1_800_000_050
+        )
+        .is_err());
         assert!(sign(b"short", "billing", "event", 1, body).is_err());
         assert!(sign(SECRET, "billing", "../bad", 1, body).is_err());
         assert!(sign(SECRET, "billing", "event", 1, &vec![0; MAX_BODY_SIZE + 1]).is_err());
