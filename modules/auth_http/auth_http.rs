@@ -599,20 +599,11 @@ mod tests {
             StatusCode::ACCEPTED
         );
 
-        let incorrect = identity_outbox::OutboxKeyring::new(
-            "legacy",
-            [99_u8; 32],
-            [],
-        )
-        .expect("wrong material, valid ID");
+        let incorrect = identity_outbox::OutboxKeyring::new("legacy", [99_u8; 32], [])
+            .expect("wrong material, valid ID");
         assert!(matches!(
-            identity_outbox::send_next_for_email(
-                &state.pool,
-                &incorrect,
-                &state.deliver,
-                &email,
-            )
-            .await,
+            identity_outbox::send_next_for_email(&state.pool, &incorrect, &state.deliver, &email,)
+                .await,
             Err(identity_outbox::OutboxError::Crypto)
         ));
 
@@ -640,16 +631,14 @@ mod tests {
         .execute(&state.pool)
         .await
         .expect("retry after recovering key");
-        assert!(
-            identity_outbox::send_next_for_email(
-                &state.pool,
-                &state.outbox_keys,
-                &state.deliver,
-                &email,
-            )
-            .await
-            .expect("recovered encryption key")
-        );
+        assert!(identity_outbox::send_next_for_email(
+            &state.pool,
+            &state.outbox_keys,
+            &state.deliver,
+            &email,
+        )
+        .await
+        .expect("recovered encryption key"));
         assert_eq!(deliveries.lock().expect("deliveries").len(), 1);
     }
 
