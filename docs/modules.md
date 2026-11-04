@@ -19,12 +19,14 @@ api_errors. audit is only valid with the PostgreSQL template.
 |---|---|---|---|
 | api_errors | basic / postgres | none | Typed safe JSON HTTP error responses |
 | pagination | basic / postgres | api_errors | Validated page/per_page and SQL offsets |
-| audit | postgres | none | Transactional PostgreSQL audit event writer and migration |
+| audit | postgres | none | Transactional audit writer with append-only PostgreSQL triggers |
 | auth | postgres | none | Argon2id passwords, opaque revocable/rotating sessions |
 | permissions | postgres | auth | Tenant-scoped deny-by-default RBAC |
+| api_keys | postgres | permissions | One-time opaque tenant keys with live RBAC |
 | auth_http | postgres | auth | Identity API with encrypted transactional outbox |
 | auth_smtp | postgres | auth_http | TLS-only SMTP delivery callback |
 | owned_records | postgres | permissions | Tenant and owner-aware SQL access |
+| webhooks | postgres | none | Signed inbound webhook receipts and durable outbound delivery |
 
 In a generated application's Rust code, import items through the library
 crate's public modules, for example:
@@ -36,11 +38,17 @@ The installer does not inject HTTP routes or run arbitrary module scripts.
 Applications wire exported functions into their own business logic.
 
 For the audit module, business changes and audit writes must share an SQLx
-transaction. Run the SQLx migrations before using audit, and commit only
-when both writes succeed. The migration includes an index for resource
-history. The schema does NOT prevent privileged SQL users from updating
-or deleting rows: immutable storage requires separate database privileges,
-policies and retention design.
+transaction. Run both versioned SQLx migrations before using audit, and commit
+only when both writes succeed. The resource-history index supports lookups;
+the second migration rejects UPDATE, DELETE and TRUNCATE with SQLSTATE 42501.
+
+This is **append-only protection, not tamper-proof storage**: PostgreSQL table
+owners and superusers can disable/drop triggers, and a compromised privileged
+connection can modify history. Use separate migration and application database
+roles, prohibit application DDL, audit privileged changes externally, and define
+a retention/partitioning policy before the table grows without bound. Existing
+deployments must apply the additive migration; never rewrite an applied SQLx
+migration checksum.
 
 ## Safety policy
 
@@ -232,3 +240,80 @@ previous keys until no encrypted pending rows use them. Read
 See `docs/identity-operations.md` for a worker integration example and
 Nginx ingress rules. SMTP provider credentials must be provisioned separately;
 this adapter never registers with or configures an external provider.
+
+
+## Portable webhooks
+
+Install in a generated PostgreSQL application:
+
+    primarykit add webhooks --project ./db_api
+
+Incoming webhook handlers must obtain a **per-source secret of at least 32
+bytes** from a secret manager and derive source identity from trusted route
+configuration, not an arbitrary unsigned request header. Use
+webhooks::verify(secret, source, event_id, signature, exact_body, now_unix)
+before JSON parsing or any business mutation. The signature header uses
+t=unix_seconds,v1=HMAC-SHA256 and authenticates the timestamp, source ID,
+event ID and the exact request bytes. Reject timestamps outside +/- 5 minutes
+and enforce a 256 KiB body-size limit at the reverse proxy as well as in code.
+
+On successful verification, open a SQLx transaction and call
+webhooks::reserve_inbound(&mut tx, &verified). Only for Inserted should the
+handler perform its domain writes; commit the receipt and all business writes
+in the **same transaction**. A duplicate receipt means already processed.
+An event ID reused for different bytes is a Conflict, not a duplicate.
+If the transaction rolls back, replay protection rolls back with it.
+Retention of inbox receipts defaults to 30 days; increase it if any provider
+retries longer. Duplicate external deliveries are expected.
+
+For outgoing events, call webhooks::outbox::enqueue(tx, configured_destination,
+event_id, raw_body) within the originating domain transaction. This stores
+the payload and stable event ID, **not the destination URL or signing key**.
+Run webhooks::outbox::run_worker as an independent supervised process with
+DeliverySecrets loaded from a secret manager and a WebhookDelivery callback.
+
+The delivery callback receives the configured destination identifier,
+event ID, signed timestamp header and original body. It must resolve the
+destination ID to a **fixed HTTPS allowlist** with DNS/private-address
+protection, avoid redirects, use bounded timeouts and treat only successful
+2xx responses as accepted. Never allow arbitrary user-supplied destination
+URLs. The worker uses PostgreSQL SKIP LOCKED, attempt fencing and bounded
+backoff, scrubs payloads after success or terminal failure, and exposes
+operational counters through outbox::stats. Delivery is **at least once**,
+not exactly once: the receiver must deduplicate event IDs.
+
+A missing destination key pauses delivery without consuming retry budget.
+Alert on dead-letter growth, oldest pending age, wrong credentials,
+connection failures and queue lag. The queue stores **unencrypted payload
+bytes** until completion; restrict PostgreSQL read access and avoid putting
+unnecessary secrets or personal information in messages.
+
+A full HTTP transport, production secret provisioning, broker setup and
+per-provider authentication policies are intentionally application-owned.
+The module never exposes HTTP routes automatically.
+
+## API keys (tenant-scoped)
+
+The optional `api_keys` module depends on `permissions` and `auth`:
+
+    primarykit add api_keys --project ./db_api
+
+An authenticated user may issue a 256-bit opaque API key for a tenant only
+when current RBAC grants `api_keys.create` AND each requested scope.
+The returned bearer token is disclosed once; PostgreSQL stores only its
+SHA-256 digest. Scopes must be distinct, cannot contain wildcards, and must
+match explicit tenant permissions. Key expiry is capped at 90 days.
+
+`authenticate(pool, token)` resolves a typed, non-forgeable principal.
+`allows(pool, &principal, permission)` rechecks the saved scopes, live RBAC,
+expiry, revocation and user activation on every use. Revoking a role therefore
+removes key access immediately. Simply checking the token once and trusting
+a requested permission is unsafe.
+
+The owner may revoke a key while active. Other users need `api_keys.revoke`
+in the same tenant. Do not include API tokens in URLs, logs or analytics;
+use an Authorization header behind TLS, and implement client-level limits.
+
+This is a portable backend module, not a complete HTTP key-management API.
+Applications must build their own audit trail, authorization middleware and
+administration UX; do not grant tenant-wide access based solely on key format.
