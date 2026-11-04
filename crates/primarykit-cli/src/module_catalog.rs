@@ -63,6 +63,10 @@ static AUDIT_FILES: &[ModuleFile] = &[
         path: "migrations/20261103000001_create_audit_events.sql",
         source: include_str!("../../../modules/audit/20261103000001_create_audit_events.sql"),
     },
+    ModuleFile {
+        path: "migrations/20261104000010_audit_append_only.sql",
+        source: include_str!("../../../modules/audit/20261104000010_audit_append_only.sql"),
+    },
 ];
 
 static AUTH_FILES: &[ModuleFile] = &[
