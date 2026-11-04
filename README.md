@@ -79,3 +79,7 @@ Opt-in `auth_http` provides registration, email verification, login,
 revocation and password-reset HTTP routes. The application must supply a
 reliable email delivery callback and add edge rate limiting; the generator
 does not enable public identity endpoints automatically.
+
+The optional `owned_records` module demonstrates authorization at the
+object/query level, combining trusted tenant context, ownership and RBAC in
+one PostgreSQL statement. Adapt the pattern to real domain tables.

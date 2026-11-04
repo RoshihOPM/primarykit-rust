@@ -123,3 +123,27 @@ responses; integrate a reliable email provider with retries and monitoring.
 A background task should remove expired/used one-time tokens and old
 rate-limit rows. This module is a starting point and requires an application
 security review before public deployment.
+
+## Example object-level authorization
+
+Install \`owned_records\` in a PostgreSQL service. It also installs
+\`auth\` and \`permissions\`.
+
+    primarykit add owned_records --project ./db_api
+
+The module supplies an example \`owned_records\` table and typed Rust
+functions \`get(pool, validated_principal, id)\` and
+\`update(pool, validated_principal, id, body)\`.
+
+It deliberately derives the tenant from the **stored resource**, not an
+untrusted tenant header. Both actions enforce user activation, explicit
+tenant RBAC grants and resource ownership in the **same SQL statement**.
+Missing resources, wrong owners and denied grants all return absence or
+false to avoid exposing cross-tenant existence. Integration tests exercise
+legitimate access, intruders in the same tenant, missing write permission
+and deactivated users.
+
+This is a reference implementation: real applications must embed equivalent
+predicates into their own domain queries and decide whether a role grants
+access beyond the owner. Do not treat a separate \`has_permission\` call
+followed by an unguarded resource update as safe.
