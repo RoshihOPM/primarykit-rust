@@ -51,6 +51,20 @@ a retention/partitioning policy before the table grows without bound. Existing
 deployments must apply the additive migration; never rewrite an applied SQLx
 migration checksum.
 
+The additive `20261104000011_audit_actor_context.sql` migration adds `actor_kind`
+(`user`, `service`, `system`, or `legacy`), optional `tenant_id`, and
+`request_id` for correlation. Use `audit::record_with_context` with a trusted
+`AuditContext` in the **same SQLx transaction** as the domain write. IDs must
+come from validated sessions, service authentication and server-side request
+context, not unsigned request headers. A user/service actor requires a
+non-empty bounded actor ID; old `record` calls and existing rows remain
+`legacy` for compatibility. Tenant and request IDs are limited to 128
+characters by database constraints. Do not put passwords, session tokens,
+authorization headers or other secrets in audit identifiers. Restrict
+audit-table SELECT grants and define data retention. The generator does not
+automatically patch previously copied projects: apply this new migration and
+port the writer explicitly to existing deployments.
+
 ## Safety policy
 
 - Only catalog modules may be installed; no remote template code is fetched.
