@@ -271,7 +271,7 @@ pub async fn run_worker(
     deliver: TokenDelivery,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let mut iterations: u64 = 0;
+    let mut next_cleanup = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
         if *shutdown.borrow() {
             break;
@@ -284,13 +284,13 @@ pub async fn run_worker(
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         }
-        iterations = iterations.wrapping_add(1);
-        if iterations % 60 == 0 {
+        if tokio::time::Instant::now() >= next_cleanup {
             if let Err(error) = cleanup_once(&pool).await {
                 tracing::error!(%error, "identity maintenance failed");
             }
+            next_cleanup = tokio::time::Instant::now() + Duration::from_secs(120);
         }
-        if shutdown.has_changed().unwrap_or(true) && *shutdown.borrow_and_update() {
+        if shutdown.has_changed().is_err() || *shutdown.borrow_and_update() {
             break;
         }
     }
