@@ -38,9 +38,9 @@ pub type TokenDelivery = Arc<dyn Fn(&'static str, String, String) -> DeliveryFut
 pub struct IdentityState {
     pub pool: PgPool,
     pub deliver: TokenDelivery,
-    /// 32 random bytes loaded from an external secret manager; never checked in.
-    /// Use the same key in the HTTP service and all email workers.
-    pub outbox_key: Arc<[u8; 32]>,
+    /// Versioned, externally managed encryption keys shared by the API
+    /// and workers. Previous keys are decrypt-only until the backlog drains.
+    pub outbox_keys: Arc<identity_outbox::OutboxKeyring>,
 }
 
 #[derive(Deserialize)]
@@ -208,7 +208,7 @@ async fn queue_token(
     purpose: &'static str,
     ttl_minutes: i64,
 ) -> HttpResult<()> {
-    identity_outbox::enqueue(tx, user_id, purpose, ttl_minutes, &state.outbox_key)
+    identity_outbox::enqueue(tx, user_id, purpose, ttl_minutes, &state.outbox_keys)
         .await
         .map_err(|error| {
             tracing::error!(%error, "failed to enqueue identity email");
@@ -484,7 +484,10 @@ mod tests {
             IdentityState {
                 pool,
                 deliver,
-                outbox_key: Arc::new([42_u8; 32]),
+                outbox_keys: Arc::new(
+                    identity_outbox::OutboxKeyring::new("legacy", [42_u8; 32], [])
+                        .expect("test encryption keys"),
+                ),
             },
             deliveries,
         ))
@@ -520,7 +523,7 @@ mod tests {
 
         assert!(identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
@@ -556,7 +559,7 @@ mod tests {
         );
         assert!(identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
@@ -625,7 +628,7 @@ mod tests {
 
         assert!(identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
@@ -651,7 +654,7 @@ mod tests {
         .expect("enable retry");
         assert!(identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
@@ -686,13 +689,13 @@ mod tests {
         let (first, second) = tokio::join!(
             identity_outbox::send_next_for_email(
                 &state.pool,
-                &state.outbox_key,
+                &state.outbox_keys,
                 &state.deliver,
                 &email,
             ),
             identity_outbox::send_next_for_email(
                 &state.pool,
-                &state.outbox_key,
+                &state.outbox_keys,
                 &state.deliver,
                 &email,
             )
@@ -803,7 +806,7 @@ mod tests {
         assert_eq!(ciphertext_size, 0);
         assert!(!identity_outbox::send_next_for_email(
             &state.pool,
-            &state.outbox_key,
+            &state.outbox_keys,
             &state.deliver,
             &email,
         )
