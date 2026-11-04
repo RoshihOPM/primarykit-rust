@@ -68,8 +68,8 @@ impl SmtpConfig {
         }
 
         let sender = sender.parse().map_err(|_| SmtpConfigError::Sender)?;
-        let public_origin = Url::parse(&public_origin)
-            .map_err(|_| SmtpConfigError::PublicOrigin)?;
+        let public_origin =
+            Url::parse(&public_origin).map_err(|_| SmtpConfigError::PublicOrigin)?;
         // Fail closed: don't allow credentials in URLs, arbitrary paths,
         // query strings, or fragments controlled by the deployment.
         if public_origin.scheme() != "https"
