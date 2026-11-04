@@ -13,7 +13,7 @@ use chacha20poly1305::{
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Postgres, Transaction};
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::{sync::watch, time::timeout};
 
@@ -26,6 +26,117 @@ pub enum OutboxError {
     Database(#[from] sqlx::Error),
     #[error("encrypted identity secret could not be processed")]
     Crypto,
+    #[error("outbox worker is missing a required encryption key")]
+    MissingKey,
+}
+
+const LEGACY_KEY_ID: &str = "legacy";
+
+/// Immutable keyring used by HTTP issuers and mail workers. The active key
+/// encrypts new messages; previous keys remain read-only for queued messages.
+/// Key material is intentionally excluded from Debug and Serialize.
+pub struct OutboxKeyring {
+    active_id: String,
+    keys: BTreeMap<String, [u8; 32]>,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum KeyringError {
+    #[error("outbox key identifier must be 1..32 ASCII letters, digits, _ or -")]
+    InvalidId,
+    #[error("duplicate outbox encryption key identifier")]
+    DuplicateId,
+}
+
+fn valid_key_id(id: &str) -> bool {
+    (1..=32).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+impl OutboxKeyring {
+    pub fn new(
+        active_id: impl Into<String>,
+        active_key: [u8; 32],
+        previous: impl IntoIterator<Item = (String, [u8; 32])>,
+    ) -> Result<Self, KeyringError> {
+        let active_id = active_id.into();
+        if !valid_key_id(&active_id) {
+            return Err(KeyringError::InvalidId);
+        }
+        let mut keys = BTreeMap::new();
+        keys.insert(active_id.clone(), active_key);
+        for (id, key) in previous {
+            if !valid_key_id(&id) {
+                return Err(KeyringError::InvalidId);
+            }
+            if keys.insert(id, key).is_some() {
+                return Err(KeyringError::DuplicateId);
+            }
+        }
+        Ok(Self { active_id, keys })
+    }
+
+    pub fn active_id(&self) -> &str {
+        &self.active_id
+    }
+
+    fn active_key(&self) -> &[u8; 32] {
+        // Invariant established by new(); active_id is always in keys.
+        &self.keys[&self.active_id]
+    }
+
+    fn decrypt_key(&self, id: &str) -> Option<&[u8; 32]> {
+        self.keys.get(id)
+    }
+
+    fn ids(&self) -> Vec<String> {
+        self.keys.keys().cloned().collect()
+    }
+}
+
+fn aad(key_id: &str, token_hash: &str) -> Vec<u8> {
+    format!("primarykit:outbox:v2:{key_id}:{token_hash}").into_bytes()
+}
+
+/// Reject workers that are missing any key for a *currently encrypted*
+/// queued message. This is an operational preflight for key rotation.
+pub async fn ensure_key_coverage(
+    pool: &PgPool,
+    keys: &OutboxKeyring,
+) -> Result<(), OutboxError> {
+    let missing: Option<String> = sqlx::query_scalar(
+        "SELECT encryption_key_id FROM auth_http_outbox \
+         WHERE delivered_at IS NULL AND dead_at IS NULL \
+           AND octet_length(ciphertext) > 0 \
+           AND NOT (encryption_key_id = ANY($1::TEXT[])) \
+         LIMIT 1",
+    )
+    .bind(keys.ids())
+    .fetch_optional(pool)
+    .await?;
+    if let Some(id) = missing {
+        tracing::error!(key_id = %id, "outbox worker lacks a required decryption key");
+        return Err(OutboxError::MissingKey);
+    }
+    Ok(())
+}
+
+/// Count all encrypted, undelivered rows using a key before retiring it.
+/// Zero means no pending ciphertext requires this key.
+pub async fn encrypted_pending_for_key(
+    pool: &PgPool,
+    key_id: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM auth_http_outbox \
+         WHERE encryption_key_id = $1 AND delivered_at IS NULL \
+           AND dead_at IS NULL AND octet_length(ciphertext) > 0",
+    )
+    .bind(key_id)
+    .fetch_one(pool)
+    .await
 }
 
 fn hash_token(token: &str) -> String {
@@ -44,7 +155,7 @@ pub async fn enqueue(
     user_id: i64,
     purpose: &'static str,
     ttl_minutes: i64,
-    key: &[u8; 32],
+    keys: &OutboxKeyring,
 ) -> Result<(), OutboxError> {
     if !matches!(purpose, "verify" | "reset") || !(1..=1440).contains(&ttl_minutes) {
         return Err(OutboxError::Crypto);
@@ -59,12 +170,14 @@ pub async fn enqueue(
         .map_err(|_| OutboxError::Crypto)?;
     let token = hex::encode(secret);
     let digest = hash_token(&token);
-    let sealed = cipher(key)
+    let key_id = keys.active_id();
+    let authenticated_data = aad(key_id, &digest);
+    let sealed = cipher(keys.active_key())
         .encrypt(
             Nonce::from_slice(&nonce),
             Payload {
                 msg: token.as_bytes(),
-                aad: digest.as_bytes(),
+                aad: &authenticated_data,
             },
         )
         .map_err(|_| OutboxError::Crypto)?;
@@ -81,27 +194,31 @@ pub async fn enqueue(
     .await?;
 
     sqlx::query(
-        "INSERT INTO auth_http_outbox (token_hash, user_id, purpose, nonce, ciphertext) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO auth_http_outbox          (token_hash, user_id, purpose, nonce, ciphertext, encryption_key_id) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(digest)
     .bind(user_id)
     .bind(purpose)
     .bind(nonce.as_slice())
     .bind(sealed)
+    .bind(key_id)
     .execute(&mut **tx)
     .await?;
     Ok(())
 }
 
-type Claimed = (i64, String, String, String, Vec<u8>, Vec<u8>, i32);
+type Claimed = (i64, String, String, String, Vec<u8>, Vec<u8>, i32, String);
 
 async fn send_filtered(
     pool: &PgPool,
-    key: &[u8; 32],
+    keys: &OutboxKeyring,
     deliver: &TokenDelivery,
     email_filter: Option<&str>,
 ) -> Result<bool, OutboxError> {
+    // Fail closed before claiming work. An unavailable old key must never
+    // consume retry attempts or mark queued messages as permanently dead.
+    ensure_key_coverage(pool, keys).await?;
     // The lease prevents concurrent deliveries. attempt number fences delayed
     // acknowledgements from workers whose lease has expired.
     let item: Option<Claimed> = sqlx::query_as(
@@ -116,6 +233,7 @@ async fn send_filtered(
              AND t.used_at IS NULL AND t.expires_at > clock_timestamp() \
              AND (t.purpose = 'verify' OR u.is_active) \
              AND ($1::TEXT IS NULL OR lower(u.email) = $1) \
+             AND o.encryption_key_id = ANY($2::TEXT[]) \
            ORDER BY o.id LIMIT 1 FOR UPDATE OF o SKIP LOCKED \
          ) \
          UPDATE auth_http_outbox o \
@@ -124,26 +242,45 @@ async fn send_filtered(
          FROM candidate c, auth_users u \
          WHERE o.id = c.id AND u.id = o.user_id \
          RETURNING o.id, o.token_hash, o.purpose, u.email, \
-                   o.nonce, o.ciphertext, o.attempts",
+                   o.nonce, o.ciphertext, o.attempts, o.encryption_key_id",
     )
     .bind(email_filter)
+    .bind(keys.ids())
     .fetch_optional(pool)
     .await?;
-    let Some((id, digest, purpose, email, nonce, ciphertext, attempt)) = item else {
+    let Some((id, digest, purpose, email, nonce, ciphertext, attempt, key_id)) = item else {
         return Ok(false);
     };
 
+    // Key ID is authenticated for v2 ciphertext. The legacy fallback only
+    // applies to rows migrated from the pre-versioned format.
     let token = if nonce.len() == 12 {
-        cipher(key)
-            .decrypt(
-                Nonce::from_slice(&nonce),
-                Payload {
-                    msg: &ciphertext,
-                    aad: digest.as_bytes(),
-                },
-            )
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
+        let result = keys.decrypt_key(&key_id).and_then(|key| {
+            let authenticated_data = aad(&key_id, &digest);
+            cipher(key)
+                .decrypt(
+                    Nonce::from_slice(&nonce),
+                    Payload {
+                        msg: &ciphertext,
+                        aad: &authenticated_data,
+                    },
+                )
+                .or_else(|_| {
+                    if key_id == LEGACY_KEY_ID {
+                        cipher(key).decrypt(
+                            Nonce::from_slice(&nonce),
+                            Payload {
+                                msg: &ciphertext,
+                                aad: digest.as_bytes(),
+                            },
+                        )
+                    } else {
+                        Err(chacha20poly1305::aead::Error)
+                    }
+                })
+                .ok()
+        });
+        result.and_then(|bytes| String::from_utf8(bytes).ok())
     } else {
         None
     };
@@ -202,20 +339,20 @@ async fn send_filtered(
 /// Returns false when no eligible work was claimed.
 pub async fn send_next(
     pool: &PgPool,
-    key: &[u8; 32],
+    keys: &OutboxKeyring,
     deliver: &TokenDelivery,
 ) -> Result<bool, OutboxError> {
-    send_filtered(pool, key, deliver, None).await
+    send_filtered(pool, keys, deliver, None).await
 }
 
 #[cfg(test)]
 pub(super) async fn send_next_for_email(
     pool: &PgPool,
-    key: &[u8; 32],
+    keys: &OutboxKeyring,
     deliver: &TokenDelivery,
     email: &str,
 ) -> Result<bool, OutboxError> {
-    send_filtered(pool, key, deliver, Some(email)).await
+    send_filtered(pool, keys, deliver, Some(email)).await
 }
 
 /// Aggregate operational counters. Read these from a secured monitoring
@@ -318,7 +455,7 @@ pub async fn cleanup_once(pool: &PgPool) -> Result<u64, sqlx::Error> {
 /// The callback must implement its own bounded network timeouts.
 pub async fn run_worker(
     pool: PgPool,
-    key: Arc<[u8; 32]>,
+    keys: Arc<OutboxKeyring>,
     deliver: TokenDelivery,
     mut shutdown: watch::Receiver<bool>,
 ) {
@@ -327,7 +464,7 @@ pub async fn run_worker(
         if *shutdown.borrow() {
             break;
         }
-        match send_next(&pool, &key, &deliver).await {
+        match send_next(&pool, &keys, &deliver).await {
             Ok(true) => {}
             Ok(false) => tokio::time::sleep(Duration::from_secs(2)).await,
             Err(error) => {
