@@ -116,7 +116,10 @@ async fn send_filtered(
             .bind(attempt)
             .execute(pool)
             .await?;
-            tracing::error!(outbox_id = id, "webhook destination configuration missing or invalid");
+            tracing::error!(
+                outbox_id = id,
+                "webhook destination configuration missing or invalid"
+            );
             return Err(error);
         }
     };
@@ -153,7 +156,11 @@ async fn send_filtered(
         .bind(terminal)
         .execute(pool)
         .await?;
-        tracing::warn!(outbox_id = id, attempt, "outgoing webhook scheduled for retry");
+        tracing::warn!(
+            outbox_id = id,
+            attempt,
+            "outgoing webhook scheduled for retry"
+        );
     }
     Ok(true)
 }
