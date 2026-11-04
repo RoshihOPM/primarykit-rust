@@ -584,6 +584,172 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn outbox_retries_then_erases_encrypted_payload_on_success() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let Some((mut state, deliveries)) = setup().await else {
+            return;
+        };
+        let email = test_email();
+        let attempt = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&attempt);
+        let original = Arc::clone(&state.deliver);
+        state.deliver = Arc::new(move |kind, to, secret| {
+            let prior = count.fetch_add(1, Ordering::SeqCst);
+            let deliver = Arc::clone(&original);
+            Box::pin(async move {
+                if prior == 0 {
+                    Err(())
+                } else {
+                    (deliver)(kind, to, secret).await
+                }
+            })
+        });
+
+        let registration =
+            format!(r#"{{"email":"{email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", registration).await,
+            StatusCode::ACCEPTED
+        );
+        let (id, ciphertext): (i64, Vec<u8>) = sqlx::query_as(
+            "SELECT o.id, o.ciphertext FROM auth_http_outbox o \
+             JOIN auth_users u ON u.id = o.user_id WHERE lower(u.email) = $1",
+        )
+        .bind(&email)
+        .fetch_one(&state.pool)
+        .await
+        .expect("outbox persisted");
+        assert!(!ciphertext.is_empty());
+        assert_eq!(deliveries.lock().expect("messages").len(), 0);
+
+        assert!(
+            identity_outbox::send_next_for_email(
+                &state.pool,
+                &state.outbox_key,
+                &state.deliver,
+                &email,
+            )
+            .await
+            .expect("first attempt")
+        );
+        assert!(deliveries.lock().expect("messages").is_empty());
+        let (attempts, sent): (i32, bool) = sqlx::query_as(
+            "SELECT attempts, delivered_at IS NOT NULL FROM auth_http_outbox WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .expect("retry state");
+        assert_eq!(attempts, 1);
+        assert!(!sent);
+
+        sqlx::query(
+            "UPDATE auth_http_outbox SET available_at = clock_timestamp() - INTERVAL '1 second' WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .expect("enable retry");
+        assert!(
+            identity_outbox::send_next_for_email(
+                &state.pool,
+                &state.outbox_key,
+                &state.deliver,
+                &email,
+            )
+            .await
+            .expect("second attempt")
+        );
+        assert_eq!(deliveries.lock().expect("messages").len(), 1);
+        let (attempts, sent, encrypted_size): (i32, bool, i32) = sqlx::query_as(
+            "SELECT attempts, delivered_at IS NOT NULL, octet_length(ciphertext) \
+             FROM auth_http_outbox WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await
+        .expect("sent state");
+        assert_eq!(attempts, 2);
+        assert!(sent);
+        assert_eq!(encrypted_size, 0);
+    }
+
+    #[tokio::test]
+    async fn simultaneous_workers_claim_only_one_pending_email() {
+        let Some((state, deliveries)) = setup().await else {
+            return;
+        };
+        let email = test_email();
+        let registration =
+            format!(r#"{{"email":"{email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", registration).await,
+            StatusCode::ACCEPTED
+        );
+        let (first, second) = tokio::join!(
+            identity_outbox::send_next_for_email(
+                &state.pool,
+                &state.outbox_key,
+                &state.deliver,
+                &email,
+            ),
+            identity_outbox::send_next_for_email(
+                &state.pool,
+                &state.outbox_key,
+                &state.deliver,
+                &email,
+            )
+        );
+        let first = first.expect("first worker");
+        let second = second.expect("second worker");
+        assert_eq!(u8::from(first) + u8::from(second), 1);
+        assert_eq!(deliveries.lock().expect("messages").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn maintenance_removes_expired_delivery_rows() {
+        let Some((state, _)) = setup().await else {
+            return;
+        };
+        let email = test_email();
+        let registration =
+            format!(r#"{{"email":"{email}","password":"sample-secure-passphrase"}}"#);
+        assert_eq!(
+            post(&state, "/auth/register", registration).await,
+            StatusCode::ACCEPTED
+        );
+        let digest: String = sqlx::query_scalar(
+            "SELECT t.token_hash FROM auth_http_one_time_tokens t \
+             JOIN auth_users u ON u.id = t.user_id WHERE lower(u.email) = $1",
+        )
+        .bind(&email)
+        .fetch_one(&state.pool)
+        .await
+        .expect("token hash");
+
+        sqlx::query(
+            "UPDATE auth_http_one_time_tokens \
+             SET expires_at = clock_timestamp() - INTERVAL '8 days' WHERE token_hash = $1",
+        )
+        .bind(&digest)
+        .execute(&state.pool)
+        .await
+        .expect("expire");
+        assert!(identity_outbox::cleanup_once(&state.pool)
+            .await
+            .expect("cleanup") >= 1);
+
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM auth_http_outbox WHERE token_hash = $1")
+                .bind(&digest)
+                .fetch_one(&state.pool)
+                .await
+                .expect("count");
+        assert_eq!(remaining, 0);
+    }
+
+    #[tokio::test]
     async fn failed_logins_are_limited_across_requests() {
         let Some((state, _)) = setup().await else {
             return;
