@@ -280,10 +280,13 @@ async fn process(
     handler: &TaskHandler,
     delivery: &Delivery,
 ) -> Result<(), TaskError> {
+    if delivery.data.len() > MAX_MESSAGE_BYTES {
+        return reject_to_dead_letter(delivery).await;
+    }
     let Ok(mut message) = serde_json::from_slice::<TaskMessage>(&delivery.data) else {
         return reject_to_dead_letter(delivery).await;
     };
-    if delivery.data.len() > MAX_MESSAGE_BYTES || !message.validate(config.max_attempts) {
+    if !message.validate(config.max_attempts) {
         return reject_to_dead_letter(delivery).await;
     }
     let result = timeout(config.handler_timeout, (handler)(message.clone())).await;
