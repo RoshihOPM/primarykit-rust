@@ -369,10 +369,12 @@ mod tests {
             .execute(&pool)
             .await
             .expect("reset password");
-        assert!(create_session_if_password_unchanged(&pool, user_id, old_hash, 60)
-            .await
-            .expect("stale login")
-            .is_none());
+        assert!(
+            create_session_if_password_unchanged(&pool, user_id, old_hash, 60)
+                .await
+                .expect("stale login")
+                .is_none()
+        );
     }
 
     #[tokio::test]

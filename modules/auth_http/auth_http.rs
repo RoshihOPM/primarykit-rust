@@ -175,9 +175,9 @@ async fn secure_hash(password: String) -> HttpResult<String> {
         let _permit = permit;
         auth::hash_password(&password)
     })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .map_err(|_| StatusCode::BAD_REQUEST)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::BAD_REQUEST)
 }
 
 async fn password_matches(password: String, hash: Option<String>) -> HttpResult<bool> {
@@ -332,18 +332,14 @@ async fn login(
     if !verified {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let token = auth::create_session_if_password_unchanged(
-        &state.pool,
-        user_id,
-        &saved_hash,
-        SESSION_TTL,
-    )
-    .await
-    .map_err(|error| {
-        tracing::error!(error = %error, "session persistence failed");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .ok_or(StatusCode::UNAUTHORIZED)?;
+    let token =
+        auth::create_session_if_password_unchanged(&state.pool, user_id, &saved_hash, SESSION_TTL)
+            .await
+            .map_err(|error| {
+                tracing::error!(error = %error, "session persistence failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?
+            .ok_or(StatusCode::UNAUTHORIZED)?;
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CACHE_CONTROL,
