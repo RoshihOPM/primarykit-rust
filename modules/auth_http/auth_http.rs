@@ -602,8 +602,7 @@ mod tests {
         // A worker deployed without the previous key must fail closed before
         // it changes the queued message's attempt count.
         let new_only =
-            identity_outbox::OutboxKeyring::new("v2", [43_u8; 32], [])
-                .expect("new-only keyring");
+            identity_outbox::OutboxKeyring::new("v2", [43_u8; 32], []).expect("new-only keyring");
         assert!(matches!(
             identity_outbox::send_next_for_email(
                 &state.pool,
@@ -650,16 +649,14 @@ mod tests {
             .await
             .expect("stored key version");
             assert_eq!(stored_id, expected_key);
-            assert!(
-                identity_outbox::send_next_for_email(
-                    &state.pool,
-                    &state.outbox_keys,
-                    &state.deliver,
-                    email,
-                )
-                .await
-                .expect("mail delivered")
-            );
+            assert!(identity_outbox::send_next_for_email(
+                &state.pool,
+                &state.outbox_keys,
+                &state.deliver,
+                email,
+            )
+            .await
+            .expect("mail delivered"));
         }
 
         assert_eq!(deliveries.lock().expect("delivered messages").len(), 2);

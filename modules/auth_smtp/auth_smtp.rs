@@ -204,8 +204,7 @@ fn parse_outbox_keys(
 /// IDENTITY_OUTBOX_PREVIOUS_KEYS="legacy=<old-hex>,v2=<older-hex>".
 /// Do not log the values of any encryption variables.
 pub fn outbox_keys_from_env() -> Result<Arc<OutboxKeyring>, SmtpConfigError> {
-    let active_id = env::var("IDENTITY_OUTBOX_KEY_ID")
-        .unwrap_or_else(|_| "legacy".to_owned());
+    let active_id = env::var("IDENTITY_OUTBOX_KEY_ID").unwrap_or_else(|_| "legacy".to_owned());
     let active_key = env::var("IDENTITY_OUTBOX_KEY_HEX")
         .map_err(|_| SmtpConfigError::Missing("IDENTITY_OUTBOX_KEY_HEX"))?;
     let previous = env::var("IDENTITY_OUTBOX_PREVIOUS_KEYS").unwrap_or_default();
@@ -239,7 +238,9 @@ mod tests {
         assert!(parse_outbox_keys("v2", "invalid", "").is_err());
         assert!(parse_outbox_keys("v2", &initial, "legacy=invalid").is_err());
         assert!(parse_outbox_keys("v2", &initial, "legacy=invalid,").is_err());
-        assert!(parse_outbox_keys("v2", &initial, &format!("legacy={older},legacy={older}")).is_err());
+        assert!(
+            parse_outbox_keys("v2", &initial, &format!("legacy={older},legacy={older}")).is_err()
+        );
     }
 
     #[test]

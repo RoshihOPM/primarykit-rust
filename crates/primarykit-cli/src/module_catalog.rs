@@ -107,9 +107,7 @@ static AUTH_HTTP_FILES: &[ModuleFile] = &[
     },
     ModuleFile {
         path: "migrations/20261104000007_outbox_key_version.sql",
-        source: include_str!(
-            "../../../modules/auth_http/20261104000007_outbox_key_version.sql"
-        ),
+        source: include_str!("../../../modules/auth_http/20261104000007_outbox_key_version.sql"),
     },
 ];
 

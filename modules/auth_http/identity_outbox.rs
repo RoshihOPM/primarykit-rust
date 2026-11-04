@@ -127,19 +127,13 @@ async fn ensure_key_coverage_filtered(
     Ok(())
 }
 
-pub async fn ensure_key_coverage(
-    pool: &PgPool,
-    keys: &OutboxKeyring,
-) -> Result<(), OutboxError> {
+pub async fn ensure_key_coverage(pool: &PgPool, keys: &OutboxKeyring) -> Result<(), OutboxError> {
     ensure_key_coverage_filtered(pool, keys, None).await
 }
 
 /// Count all encrypted, undelivered rows using a key before retiring it.
 /// Zero means no pending ciphertext requires this key.
-pub async fn encrypted_pending_for_key(
-    pool: &PgPool,
-    key_id: &str,
-) -> Result<i64, sqlx::Error> {
+pub async fn encrypted_pending_for_key(pool: &PgPool, key_id: &str) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT COUNT(*)::BIGINT FROM auth_http_outbox \
          WHERE encryption_key_id = $1 AND delivered_at IS NULL \
@@ -512,12 +506,8 @@ mod keyring_tests {
     #[test]
     fn decrypts_pre_versioned_legacy_payloads_without_weakening_new_aad() {
         let key = [42_u8; 32];
-        let keys = OutboxKeyring::new(
-            "v2",
-            [43_u8; 32],
-            [("legacy".to_owned(), key)],
-        )
-        .expect("keyring");
+        let keys =
+            OutboxKeyring::new("v2", [43_u8; 32], [("legacy".to_owned(), key)]).expect("keyring");
         let plaintext = "a".repeat(64);
         let digest = hash_token(&plaintext);
         let nonce = [11_u8; 12];
