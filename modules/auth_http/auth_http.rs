@@ -785,9 +785,12 @@ mod tests {
         .await
         .expect("expire token");
 
-        assert!(identity_outbox::cleanup_once(&state.pool)
-            .await
-            .expect("maintenance") >= 1);
+        assert!(
+            identity_outbox::cleanup_once(&state.pool)
+                .await
+                .expect("maintenance")
+                >= 1
+        );
         let (dead, ciphertext_size): (bool, i32) = sqlx::query_as(
             "SELECT dead_at IS NOT NULL, octet_length(ciphertext) \
              FROM auth_http_outbox WHERE token_hash = $1",
