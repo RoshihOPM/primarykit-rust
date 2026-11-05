@@ -65,6 +65,19 @@ audit-table SELECT grants and define data retention. The generator does not
 automatically patch previously copied projects: apply this new migration and
 port the writer explicitly to existing deployments.
 
+### Audit event distribution
+
+The optional audit module also installs an additive PostgreSQL outbox,
+worker source and integration tests. Use `audit::record_and_enqueue` inside
+the originating business transaction to persist the audit event and queue
+its notification atomically. A separate supervised worker sends the event
+to a trusted configured destination, with leases, fencing, retries and
+terminal failure records. Legacy `record()` and `record_with_context()`
+do **not** enqueue automatically. Delivery is **at least once**; downstream
+consumers must deduplicate on the destination and stable audit event ID.
+See [audit outbox operations](audit-outbox.md) before deploying.
+
+
 ## Safety policy
 
 - Only catalog modules may be installed; no remote template code is fetched.
