@@ -32,7 +32,7 @@ jobs:
       AMQP_URL: amqp://guest:guest@127.0.0.1:5672/%2f
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
@@ -95,7 +95,7 @@ jobs:
       DATABASE_URL: postgres://primarykit:primarykit_dev_only@127.0.0.1:5432/primarykit_ci
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
