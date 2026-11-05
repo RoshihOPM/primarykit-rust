@@ -60,6 +60,14 @@ static AUDIT_FILES: &[ModuleFile] = &[
         source: include_str!("../../../modules/audit/audit.rs"),
     },
     ModuleFile {
+        path: "src/modules/audit_outbox.rs",
+        source: include_str!("../../../modules/audit/audit_outbox.rs"),
+    },
+    ModuleFile {
+        path: "src/modules/audit_outbox_tests.rs",
+        source: include_str!("../../../modules/audit/audit_outbox_tests.rs"),
+    },
+    ModuleFile {
         path: "migrations/20261103000001_create_audit_events.sql",
         source: include_str!("../../../modules/audit/20261103000001_create_audit_events.sql"),
     },
@@ -70,6 +78,10 @@ static AUDIT_FILES: &[ModuleFile] = &[
     ModuleFile {
         path: "migrations/20261104000011_audit_actor_context.sql",
         source: include_str!("../../../modules/audit/20261104000011_audit_actor_context.sql"),
+    },
+    ModuleFile {
+        path: "migrations/20261105000001_audit_delivery_outbox.sql",
+        source: include_str!("../../../modules/audit/20261105000001_audit_delivery_outbox.sql"),
     },
 ];
 
@@ -197,10 +209,10 @@ pub static MODULES: &[ModuleInfo] = &[
     },
     ModuleInfo {
         name: "audit",
-        description: "Transactional PostgreSQL audit events",
+        description: "Transactional PostgreSQL audit events and leased outbox",
         dependencies: &[],
         requires_postgres: true,
-        cargo_dependencies: &[],
+        cargo_dependencies: &["thiserror = \"2\""],
         files: AUDIT_FILES,
     },
     ModuleInfo {
@@ -668,6 +680,12 @@ mod tests {
         assert!(project
             .0
             .join("migrations/20261103000001_create_audit_events.sql")
+            .is_file());
+        assert!(project.0.join("src/modules/audit_outbox.rs").is_file());
+        assert!(project.0.join("src/modules/audit_outbox_tests.rs").is_file());
+        assert!(project
+            .0
+            .join("migrations/20261105000001_audit_delivery_outbox.sql")
             .is_file());
         assert!(project
             .0
