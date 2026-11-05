@@ -211,7 +211,13 @@ async fn send_filtered(
             fail_claim(pool, claimed.id, claimed.lease_generation, true).await?
         }
         Ok(Err(DeliveryFailure::Retry)) | Err(_) => {
-            fail_claim(pool, claimed.id, claimed.lease_generation, false).await?
+            fail_claim(
+                pool,
+                claimed.id,
+                claimed.lease_generation,
+                claimed.attempts >= MAX_ATTEMPTS,
+            )
+            .await?
         }
     }
     Ok(true)
