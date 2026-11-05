@@ -42,10 +42,8 @@ pub struct AuditDelivery {
     pub resource_id: String,
 }
 
-pub type AuditDeliveryFuture =
-    Pin<Box<dyn Future<Output = Result<(), DeliveryFailure>> + Send>>;
-pub type AuditDeliveryHandler =
-    Arc<dyn Fn(AuditDelivery) -> AuditDeliveryFuture + Send + Sync>;
+pub type AuditDeliveryFuture = Pin<Box<dyn Future<Output = Result<(), DeliveryFailure>> + Send>>;
+pub type AuditDeliveryHandler = Arc<dyn Fn(AuditDelivery) -> AuditDeliveryFuture + Send + Sync>;
 
 #[derive(Debug, sqlx::FromRow)]
 struct ClaimedDelivery {
@@ -133,11 +131,7 @@ async fn dead_letter_exhausted(
     Ok(updated)
 }
 
-async fn complete_claim(
-    pool: &PgPool,
-    id: i64,
-    generation: i64,
-) -> Result<(), AuditOutboxError> {
+async fn complete_claim(pool: &PgPool, id: i64, generation: i64) -> Result<(), AuditOutboxError> {
     let updated = sqlx::query(
         r#"
         UPDATE audit_delivery_outbox
@@ -242,9 +236,8 @@ pub struct AuditOutboxStats {
 
 /// Expose to authenticated operations/metrics only, never a public API.
 pub async fn stats(pool: &PgPool) -> Result<AuditOutboxStats, sqlx::Error> {
-    let (pending, due, dead, oldest_pending_seconds): (i64, i64, i64, f64) =
-        sqlx::query_as(
-            r#"
+    let (pending, due, dead, oldest_pending_seconds): (i64, i64, i64, f64) = sqlx::query_as(
+        r#"
             SELECT COUNT(*) FILTER
                        (WHERE delivered_at IS NULL AND dead_at IS NULL)::BIGINT,
                    COUNT(*) FILTER
@@ -257,9 +250,9 @@ pub async fn stats(pool: &PgPool) -> Result<AuditOutboxStats, sqlx::Error> {
                    )), 0))::FLOAT8
             FROM audit_delivery_outbox
             "#,
-        )
-        .fetch_one(pool)
-        .await?;
+    )
+    .fetch_one(pool)
+    .await?;
     Ok(AuditOutboxStats {
         pending,
         due,
@@ -290,8 +283,7 @@ pub async fn run_worker(
         if *shutdown.borrow() {
             break;
         }
-        if !send_next(&pool, &delivery).await?
-            && wait_or_shutdown(&mut shutdown, IDLE_DELAY).await
+        if !send_next(&pool, &delivery).await? && wait_or_shutdown(&mut shutdown, IDLE_DELAY).await
         {
             break;
         }
