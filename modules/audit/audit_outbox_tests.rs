@@ -121,7 +121,10 @@ async fn invalid_destination_rejects_entire_event_write() {
     .await
     .expect_err("destination name must be constrained");
     assert_eq!(
-        error.as_database_error().and_then(|db| db.code()).as_deref(),
+        error
+            .as_database_error()
+            .and_then(|db| db.code())
+            .as_deref(),
         Some("23514")
     );
     tx.rollback().await.expect("rollback");
@@ -255,13 +258,12 @@ async fn crashed_final_attempt_is_reaped_after_lease_expiry() {
             .expect("reaper"),
         1
     );
-    let dead: bool = sqlx::query_scalar(
-        "SELECT dead_at IS NOT NULL FROM audit_delivery_outbox WHERE id = $1",
-    )
-    .bind(final_claim.id)
-    .fetch_one(&pool)
-    .await
-    .expect("dead state");
+    let dead: bool =
+        sqlx::query_scalar("SELECT dead_at IS NOT NULL FROM audit_delivery_outbox WHERE id = $1")
+            .bind(final_claim.id)
+            .fetch_one(&pool)
+            .await
+            .expect("dead state");
     assert!(dead);
 }
 
@@ -291,9 +293,8 @@ async fn confirmed_callback_receives_stable_event_id_and_metadata() {
 #[tokio::test]
 async fn shutdown_interrupts_idle_wait() {
     let (sender, mut receiver) = watch::channel(false);
-    let waiting = tokio::spawn(async move {
-        wait_or_shutdown(&mut receiver, Duration::from_secs(30)).await
-    });
+    let waiting =
+        tokio::spawn(async move { wait_or_shutdown(&mut receiver, Duration::from_secs(30)).await });
     tokio::task::yield_now().await;
     sender.send(true).expect("receiver is alive");
     assert!(timeout(Duration::from_secs(2), waiting)
