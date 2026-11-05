@@ -3,6 +3,9 @@
 
 use sqlx::{Postgres, Transaction};
 
+#[path = "audit_outbox.rs"]
+pub mod outbox;
+
 /// Context must be derived from a verified principal and trusted request metadata.
 /// Do not copy actor or tenant identifiers directly from unsigned client input.
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +57,45 @@ pub async fn record_with_context(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+/// Write the authoritative append-only audit event and enqueue its notification
+/// in one SQL statement and in the caller's domain transaction. Commit the
+/// transaction only after all business mutations succeed. The destination is
+/// a configured identifier, not a user-supplied URL. This is opt-in: legacy
+/// record() and record_with_context() calls do not publish notifications.
+pub async fn record_and_enqueue(
+    tx: &mut Transaction<'_, Postgres>,
+    context: AuditContext<'_>,
+    action: &str,
+    resource_type: &str,
+    resource_id: &str,
+    destination: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        WITH event AS (
+            INSERT INTO audit_events
+                (actor_id, actor_kind, tenant_id, request_id,
+                 action, resource_type, resource_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id
+        )
+        INSERT INTO audit_delivery_outbox (audit_event_id, destination)
+        SELECT id, $8 FROM event
+        RETURNING audit_event_id
+        "#,
+    )
+    .bind(context.actor_id)
+    .bind(context.actor_kind.as_str())
+    .bind(context.tenant_id)
+    .bind(context.request_id)
+    .bind(action)
+    .bind(resource_type)
+    .bind(resource_id)
+    .bind(destination)
+    .fetch_one(&mut **tx)
+    .await
 }
 
 pub async fn record(
