@@ -682,7 +682,10 @@ mod tests {
             .join("migrations/20261103000001_create_audit_events.sql")
             .is_file());
         assert!(project.0.join("src/modules/audit_outbox.rs").is_file());
-        assert!(project.0.join("src/modules/audit_outbox_tests.rs").is_file());
+        assert!(project
+            .0
+            .join("src/modules/audit_outbox_tests.rs")
+            .is_file());
         assert!(project
             .0
             .join("migrations/20261105000001_audit_delivery_outbox.sql")
