@@ -272,10 +272,11 @@ mod tests {
             assert_rejected(error);
         }
 
-        // TRUNCATE would erase other tests' history if the trigger were absent:
-        // always execute it within a transaction that is rolled back.
+        // The new outbox FK rejects plain TRUNCATE with SQLSTATE 0A000
+        // before the append-only trigger can run. CASCADE exercises the
+        // trigger itself; always roll the transaction back if it is absent.
         let mut tx = pool.begin().await.expect("transaction");
-        let error = sqlx::query("TRUNCATE TABLE audit_events")
+        let error = sqlx::query("TRUNCATE TABLE audit_events CASCADE")
             .execute(&mut *tx)
             .await
             .expect_err("audit truncation must be rejected");
