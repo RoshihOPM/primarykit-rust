@@ -5,10 +5,7 @@ COPY migrations ./migrations
 COPY src ./src
 RUN cargo build --locked --release
 
-FROM debian:bookworm-slim
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+FROM gcr.io/distroless/base-nossl-debian13:nonroot
 WORKDIR /app
 COPY --from=builder /src/target/release/{{project_name}} /app/server
 USER 65532:65532
