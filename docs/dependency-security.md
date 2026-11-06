@@ -17,6 +17,36 @@ not prove that every generated application's dependencies are secure.
   does **not** update dependencies embedded in copied template manifests or
   module catalog strings; maintainers must review those sources separately.
 
+## Automated RustSec checks
+
+The `.github/workflows/security.yml` workflow runs on pull requests, on
+pushes to `dev`/`main`, nightly and on manual dispatch. It installs a
+checksum-verified `cargo-audit` binary and executes
+`scripts/audit-rust-dependencies.sh`. The script audits three **independent**
+resolved dependency graphs:
+
+1. The checked-in generator workspace `Cargo.lock`.
+2. A freshly generated basic Axum project with pagination and RabbitMQ tasks.
+3. A freshly generated PostgreSQL project with audit, auth, API keys, HTTP
+   identity, SMTP, tenant records, webhooks and tasks.
+
+Each generated application receives its own temporary `Cargo.lock` via
+`cargo generate-lockfile` before `cargo audit --file`. The temporary
+lockfiles are **not release lockfiles** for already deployed applications.
+An advisory or an inability to complete an audit fails the workflow; do not
+mark it green with `continue-on-error`. Investigate and upgrade affected
+dependencies, including version ranges in copied manifests and module
+catalog entries. Document any exceptional risk acceptance with the advisory
+ID, affected usage, mitigation, owner and expiry; never add an undocumented
+global ignore list.
+
+RustSec checks known Rust crate advisories, **not** container OS packages,
+secrets, infrastructure, or exploitability of application logic. Continue
+scanning built images and deployed applications' committed lockfiles in their
+own deployment pipelines. The security workflow is separate from the two
+preexisting Rust CI jobs; add its exact check to the protected `main` ruleset
+only once it is consistently green (issue #19).
+
 ## Deploying generated applications
 
 1. Generate the service, install the required modules, then resolve and commit
