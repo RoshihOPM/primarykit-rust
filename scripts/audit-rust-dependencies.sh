@@ -41,8 +41,28 @@ for module in audit permissions api_keys auth_http auth_smtp owned_records webho
     cargo run --locked -p primarykit -- add "$module" --project "$temporary_root/audit_postgres"
 done
 cargo generate-lockfile --manifest-path "$temporary_root/audit_postgres/Cargo.toml"
-echo "Checking whether rsa is enabled in the PostgreSQL project's active graph"
-cargo tree --manifest-path "$temporary_root/audit_postgres/Cargo.toml" --target all --prefix none --format '{p}' | grep 'rsa v' || true
-audit_lockfile "$temporary_root/audit_postgres/Cargo.lock"
+
+# SQLx resolves the unused sqlx-mysql -> rsa package in Cargo.lock even when
+# the project uses only PostgreSQL. RUSTSEC-2023-0071 has no patched release.
+# The narrow exception below is ONLY permitted while rsa is absent from the
+# complete active feature graph for all target platforms (see issue #44).
+echo "Verifying RSA is absent from the active PostgreSQL dependency graph"
+active_dependencies="$(cargo tree --manifest-path "$temporary_root/audit_postgres/Cargo.toml" --target all --prefix none --format '{p}')"
+if grep -Eq '^rsa v[0-9]' <<< "$active_dependencies"; then
+    echo "RSA is active; refusing RUSTSEC-2023-0071 exception" >&2
+    exit 1
+fi
+
+postgres_lock="$temporary_root/audit_postgres/Cargo.lock"
+if grep -Fq 'name = "rsa"' "$postgres_lock"; then
+    if ! grep -Fq 'name = "sqlx-mysql"' "$postgres_lock"; then
+        echo "Unexpected RSA lockfile source; manual security review required" >&2
+        exit 1
+    fi
+    echo "Applying scoped, active-graph-guarded RUSTSEC-2023-0071 exception (issue #44)"
+    cargo audit --file "$postgres_lock" --ignore RUSTSEC-2023-0071
+else
+    audit_lockfile "$postgres_lock"
+fi
 
 echo "All three Cargo.lock audits completed without reported vulnerabilities"
