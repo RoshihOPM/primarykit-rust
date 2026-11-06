@@ -65,4 +65,4 @@ else
     audit_lockfile "$postgres_lock"
 fi
 
-echo "All three Cargo.lock audits completed without reported vulnerabilities"
+echo "Dependency audits completed; any scoped advisory exception is documented in issue #44"
