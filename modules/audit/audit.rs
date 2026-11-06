@@ -287,7 +287,10 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("check installed audit trigger");
-        assert!(trigger_enabled, "audit truncation trigger must stay enabled");
+        assert!(
+            trigger_enabled,
+            "audit truncation trigger must stay enabled"
+        );
 
         let mut tx = pool.begin().await.expect("transaction");
         sqlx::query("CREATE TEMP TABLE audit_truncate_probe(id BIGINT) ON COMMIT DROP")
