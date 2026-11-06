@@ -21,6 +21,11 @@ Endpoints:
 
 ## Docker
 
+Resolve and **commit** the project's own Cargo.lock before building the
+runtime image. The Dockerfile uses `cargo build --locked --release` and
+deliberately refuses a missing or outdated lockfile.
+
+    cargo generate-lockfile
     docker build -t {{project_name}} .
     docker run --rm -p 8000:8000 {{project_name}}
 
