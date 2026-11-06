@@ -9,11 +9,20 @@ the source workspace or the Rust builder stage.
 `.github/workflows/container-security.yml` independently generates the basic
 and PostgreSQL templates, resolves each application's own Cargo.lock, builds
 the corresponding Dockerfile, checks the runtime UID/GID `65532:65532`,
-then runs Trivy against the local **final image**. It blocks the job on
+smoke-tests the actual container with `/health/ready` (including a temporary
+PostgreSQL service for the database template), then runs Trivy against the
+local **final image**. It blocks the job on
 reported HIGH or CRITICAL vulnerabilities in OS packages or detectable
 libraries. There are no vulnerability ignore lists and scan errors fail the
 check. The workflow runs for PRs, both mainline branches, on Monday, and on
 manual dispatch. It has read-only GitHub permissions; no images are pushed.
+
+The final stage uses Debian 13 Distroless `base-nossl`, not a full
+Debian userland. Its lack of a shell and package manager reduces installed
+packages and attack surface. TLS trust roots are present, but applications
+needing extra shared libraries, shell scripts or non-Rust TLS must explicitly
+review and test their runtime dependencies. Never use the Distroless debug
+variant for the production image.
 
 The scanner does not inspect the builder-stage image or cover secrets,
 runtime authorization, app-specific dependencies, ingress, DB privileges,
