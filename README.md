@@ -53,7 +53,9 @@ same SQLx transaction as the audited business operation. For details, see
 GitHub Actions verifies the CLI and also generates, lints, tests and compiles
 a fresh Axum project. A separate RustSec workflow audits the generator lockfile
 and newly resolved basic/PostgreSQL project lockfiles on PRs and nightly. See
-[dependency security](docs/dependency-security.md). The starter provides basic
+[dependency security](docs/dependency-security.md). Separate CI builds and scans
+the generated basic and PostgreSQL **runtime Docker images**; see
+[container security](docs/container-security.md). The starter provides basic
 liveness, readiness, tracing, graceful shutdown, and a non-root Docker runtime.
 
 ## Project status
