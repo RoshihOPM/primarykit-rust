@@ -272,14 +272,43 @@ mod tests {
             assert_rejected(error);
         }
 
-        // The new outbox FK rejects plain TRUNCATE with SQLSTATE 0A000
-        // before the append-only trigger can run. CASCADE exercises the
-        // trigger itself; always roll the transaction back if it is absent.
+        // Running TRUNCATE ... CASCADE on the shared audit table races with
+        // concurrent outbox tests: ACCESS EXCLUSIVE and FK locks can deadlock.
+        // Assert that the real table has its enabled TRUNCATE trigger, then
+        // exercise that exact trigger function on a transaction-local table.
+        let trigger_enabled: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_trigger
+             WHERE tgrelid = 'audit_events'::regclass
+               AND tgname = 'audit_events_reject_truncate'
+               AND tgenabled IN ('O', 'A')
+               AND (tgtype::integer & 32) = 32
+               AND tgfoid = 'primarykit_reject_audit_mutation'::regproc)",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("check installed audit trigger");
+        assert!(
+            trigger_enabled,
+            "audit truncation trigger must stay enabled"
+        );
+
         let mut tx = pool.begin().await.expect("transaction");
-        let error = sqlx::query("TRUNCATE TABLE audit_events CASCADE")
+        sqlx::query("CREATE TEMP TABLE audit_truncate_probe(id BIGINT) ON COMMIT DROP")
             .execute(&mut *tx)
             .await
-            .expect_err("audit truncation must be rejected");
+            .expect("create isolated probe");
+        sqlx::query(
+            "CREATE TRIGGER audit_probe_reject_truncate BEFORE TRUNCATE
+             ON audit_truncate_probe FOR EACH STATEMENT
+             EXECUTE FUNCTION primarykit_reject_audit_mutation()",
+        )
+        .execute(&mut *tx)
+        .await
+        .expect("attach audit rejection function to probe");
+        let error = sqlx::query("TRUNCATE TABLE audit_truncate_probe")
+            .execute(&mut *tx)
+            .await
+            .expect_err("append-only trigger must reject truncation");
         assert_rejected(error);
         tx.rollback().await.expect("rollback");
     }

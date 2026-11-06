@@ -1,0 +1,42 @@
+name: Rust Dependency Security
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+  schedule:
+    # New RustSec advisories may appear without repository changes.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rustsec-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Audit generator and generated projects
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and build outputs
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install RustSec cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+          fallback: none
+
+      - name: Audit all resolved dependency graphs
+        shell: bash
+        run: bash scripts/audit-rust-dependencies.sh
