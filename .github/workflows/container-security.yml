@@ -57,6 +57,56 @@ jobs:
           actual_user="$(docker image inspect "primarykit-runtime-$TEMPLATE:ci" --format '{{.Config.User}}')"
           test "$actual_user" = "65532:65532"
 
+      - name: Smoke-test final image as an unprivileged process
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_id=""
+          db_id=""
+          network=""
+          cleanup() {
+            [[ -z "$app_id" ]] || docker rm -f "$app_id" >/dev/null 2>&1 || true
+            [[ -z "$db_id" ]] || docker rm -f "$db_id" >/dev/null 2>&1 || true
+            [[ -z "$network" ]] || docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          options=()
+          if [[ "$TEMPLATE" == "postgres" ]]; then
+            network="primarykit-ci-$GITHUB_RUN_ID"
+            docker network create "$network"
+            db_id="$(docker run --detach --network "$network" \
+              -e POSTGRES_USER=primarykit -e POSTGRES_PASSWORD=primarykit_dev_only \
+              -e POSTGRES_DB=primarykit_ci postgres:16-alpine)"
+            for attempt in {1..30}; do
+              if docker exec "$db_id" pg_isready -U primarykit -d primarykit_ci >/dev/null 2>&1; then
+                break
+              fi
+              sleep 1
+            done
+            docker exec "$db_id" pg_isready -U primarykit -d primarykit_ci
+            options+=(--network "$network" \
+              -e DATABASE_URL=postgres://primarykit:primarykit_dev_only@primarykit-ci-db:5432/primarykit_ci)
+            docker network connect --alias primarykit-ci-db "$network" "$db_id" || true
+          fi
+
+          app_id="$(docker run --detach --publish 127.0.0.1::8000 \
+            "${options[@]}" "primarykit-runtime-$TEMPLATE:ci")"
+          port="$(docker port "$app_id" 8000/tcp | head -n 1 | awk -F: '{print $NF}')"
+          test -n "$port"
+          ready=0
+          for attempt in {1..40}; do
+            if curl --fail --silent "http://127.0.0.1:$port/health/ready" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != 1 ]]; then
+            docker logs "$app_id" || true
+            exit 1
+          fi
+
       - name: Scan built runtime image for critical and high vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
