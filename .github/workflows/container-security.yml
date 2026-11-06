@@ -1,0 +1,71 @@
+name: Generated Container Image Security
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+  schedule:
+    # Catch base-image CVEs without changes to generated project sources.
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Scan generated runtime image (${{ matrix.template }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        template: [basic, postgres]
+    env:
+      TEMPLATE: ${{ matrix.template }}
+    steps:
+      - name: Checkout generator
+        uses: actions/checkout@v5
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache generator dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate service and its independent Cargo.lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$TEMPLATE" == "basic" ]]; then
+            cargo run --locked -p primarykit -- new image_smoke --output "$RUNNER_TEMP"
+          else
+            cargo run --locked -p primarykit -- new image_smoke --template postgres --output "$RUNNER_TEMP"
+          fi
+          cargo generate-lockfile --manifest-path "$RUNNER_TEMP/image_smoke/Cargo.toml"
+          test -s "$RUNNER_TEMP/image_smoke/Cargo.lock"
+
+      - name: Build actual generated runtime image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --tag "primarykit-runtime-$TEMPLATE:ci" "$RUNNER_TEMP/image_smoke"
+          actual_user="$(docker image inspect "primarykit-runtime-$TEMPLATE:ci" --format '{{.Config.User}}')"
+          test "$actual_user" = "65532:65532"
+
+      - name: Scan built runtime image for critical and high vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: primarykit-runtime-${{ matrix.template }}:ci
+          scan-type: image
+          scanners: vuln
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: "false"
+          format: table
+          version: v0.76.1
