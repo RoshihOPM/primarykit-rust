@@ -17,12 +17,14 @@ libraries. There are no vulnerability ignore lists and scan errors fail the
 check. The workflow runs for PRs, both mainline branches, on Monday, and on
 manual dispatch. It has read-only GitHub permissions; no images are pushed.
 
-The final stage uses Debian 13 Distroless `cc` (with `libgcc_s`
-required by the Rust unwind runtime), not a full Debian userland. Its lack
-of a shell and package manager reduces installed packages and attack surface.
-TLS trust roots are present, but applications needing extra shared libraries,
-shell scripts or non-Rust TLS must explicitly review and test their runtime
-dependencies. Never use the Distroless debug variant for the production image.
+Both templates build with the official Rust Alpine/musl toolchain and ship
+the resulting statically linked binary on Debian 13 Distroless `static`.
+This runtime has no shell, package manager or glibc and provides CA trust
+roots for Rustls. It avoids shipping the builder's OS packages and optional
+zlib/libgcc runtime dependencies. musl compatibility (including DNS behavior),
+TLS trust, migration startup and runtime readiness are covered by the smoke
+checks; applications adding native C libraries must revisit linking/runtime
+requirements. Never use the Distroless debug variant for production images.
 
 The scanner does not inspect the builder-stage image or cover secrets,
 runtime authorization, app-specific dependencies, ingress, DB privileges,
