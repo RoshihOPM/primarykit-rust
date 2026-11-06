@@ -187,7 +187,9 @@ mod tests {
         assert!(manifest.contains("axum"));
         assert!(manifest.contains("[workspace]"));
         assert!(output.join("src/main.rs").is_file());
-        assert!(output.join("Dockerfile").is_file());
+        let dockerfile = fs::read_to_string(output.join("Dockerfile")).expect("dockerfile");
+        assert_eq!(dockerfile.matches("@sha256:").count(), 2);
+        assert!(dockerfile.contains("cargo build --locked --release"));
         assert!(output.join("README.md").is_file());
         assert!(output.join("AGENTS.md").is_file());
         assert!(output.join("src/lib.rs").is_file());
@@ -233,6 +235,9 @@ mod tests {
             .join("migrations/20261103000000_create_examples.sql")
             .is_file());
         assert!(output.join("compose.yaml").is_file());
+        let dockerfile = fs::read_to_string(output.join("Dockerfile")).expect("dockerfile");
+        assert_eq!(dockerfile.matches("@sha256:").count(), 2);
+        assert!(dockerfile.contains("cargo build --locked --release"));
         assert!(output.join("AGENTS.md").is_file());
         assert!(output.join("primarykit-origin.json").is_file());
     }
