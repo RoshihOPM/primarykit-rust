@@ -79,12 +79,12 @@ jobs:
               -e POSTGRES_USER=primarykit -e POSTGRES_PASSWORD=primarykit_dev_only \
               -e POSTGRES_DB=primarykit_ci postgres:16-alpine)"
             for attempt in {1..30}; do
-              if docker exec "$db_id" pg_isready -U primarykit -d primarykit_ci >/dev/null 2>&1; then
+              if docker exec "$db_id" pg_isready -h 127.0.0.1 -U primarykit -d primarykit_ci >/dev/null 2>&1; then
                 break
               fi
               sleep 1
             done
-            docker exec "$db_id" pg_isready -U primarykit -d primarykit_ci
+            docker exec "$db_id" pg_isready -h 127.0.0.1 -U primarykit -d primarykit_ci
             options+=(--network "$network" \
               -e DATABASE_URL=postgres://primarykit:primarykit_dev_only@primarykit-ci-db:5432/primarykit_ci)
           fi
