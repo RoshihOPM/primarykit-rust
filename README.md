@@ -55,8 +55,10 @@ a fresh Axum project. A separate RustSec workflow audits the generator lockfile
 and newly resolved basic/PostgreSQL project lockfiles on PRs and nightly. See
 [dependency security](docs/dependency-security.md). Separate CI builds and scans
 the generated basic and PostgreSQL **runtime Docker images**; see
-[container security](docs/container-security.md). The starter provides basic
-liveness, readiness, tracing, graceful shutdown, and a non-root Docker runtime.
+[container security](docs/container-security.md). Both generated Dockerfiles
+pin verified base image digests; CI archives CycloneDX SBOMs and local build
+identity for each runtime image. The starter provides basic liveness, readiness,
+tracing, graceful shutdown, and a non-root Docker runtime.
 
 ## Project status
 
