@@ -1,0 +1,118 @@
+name: Generated Container Image Security
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+  schedule:
+    # Catch base-image CVEs without changes to generated project sources.
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Scan generated runtime image (${{ matrix.template }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        template: [basic, postgres]
+    env:
+      TEMPLATE: ${{ matrix.template }}
+    steps:
+      - name: Checkout generator
+        uses: actions/checkout@v5
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache generator dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate service and its independent Cargo.lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$TEMPLATE" == "basic" ]]; then
+            cargo run --locked -p primarykit -- new image_smoke --output "$RUNNER_TEMP"
+          else
+            cargo run --locked -p primarykit -- new image_smoke --template postgres --output "$RUNNER_TEMP"
+          fi
+          cargo generate-lockfile --manifest-path "$RUNNER_TEMP/image_smoke/Cargo.toml"
+          test -s "$RUNNER_TEMP/image_smoke/Cargo.lock"
+
+      - name: Build actual generated runtime image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --tag "primarykit-runtime-$TEMPLATE:ci" "$RUNNER_TEMP/image_smoke"
+          actual_user="$(docker image inspect "primarykit-runtime-$TEMPLATE:ci" --format '{{.Config.User}}')"
+          test "$actual_user" = "65532:65532"
+
+      - name: Smoke-test final image as an unprivileged process
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_id=""
+          db_id=""
+          network=""
+          cleanup() {
+            [[ -z "$app_id" ]] || docker rm -f "$app_id" >/dev/null 2>&1 || true
+            [[ -z "$db_id" ]] || docker rm -f "$db_id" >/dev/null 2>&1 || true
+            [[ -z "$network" ]] || docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          options=()
+          if [[ "$TEMPLATE" == "postgres" ]]; then
+            network="primarykit-ci-$GITHUB_RUN_ID"
+            docker network create "$network"
+            db_id="$(docker run --detach --name primarykit-ci-db --network "$network" \
+              -e POSTGRES_USER=primarykit -e POSTGRES_PASSWORD=primarykit_dev_only \
+              -e POSTGRES_DB=primarykit_ci postgres:16-alpine)"
+            for attempt in {1..30}; do
+              if docker exec "$db_id" pg_isready -h 127.0.0.1 -U primarykit -d primarykit_ci >/dev/null 2>&1; then
+                break
+              fi
+              sleep 1
+            done
+            docker exec "$db_id" pg_isready -h 127.0.0.1 -U primarykit -d primarykit_ci
+            options+=(--network "$network" \
+              -e DATABASE_URL=postgres://primarykit:primarykit_dev_only@primarykit-ci-db:5432/primarykit_ci)
+          fi
+
+          app_id="$(docker run --detach --publish 127.0.0.1:18000:8000 \
+            "${options[@]}" "primarykit-runtime-$TEMPLATE:ci")"
+          ready=0
+          for attempt in {1..40}; do
+            if curl --fail --silent "http://127.0.0.1:18000/health/ready" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != 1 ]]; then
+            docker logs "$app_id" || true
+            exit 1
+          fi
+
+      - name: Scan built runtime image for critical and high vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: primarykit-runtime-${{ matrix.template }}:ci
+          scan-type: image
+          scanners: vuln
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: "false"
+          format: table
+          version: v0.76.1
