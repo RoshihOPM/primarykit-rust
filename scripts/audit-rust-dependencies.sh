@@ -41,6 +41,8 @@ for module in audit permissions api_keys auth_http auth_smtp owned_records webho
     cargo run --locked -p primarykit -- add "$module" --project "$temporary_root/audit_postgres"
 done
 cargo generate-lockfile --manifest-path "$temporary_root/audit_postgres/Cargo.toml"
+echo "Checking whether rsa is enabled in the PostgreSQL project's active graph"
+cargo tree --manifest-path "$temporary_root/audit_postgres/Cargo.toml" --target all --prefix none --format '{p}' | grep 'rsa v' || true
 audit_lockfile "$temporary_root/audit_postgres/Cargo.lock"
 
 echo "All three Cargo.lock audits completed without reported vulnerabilities"
