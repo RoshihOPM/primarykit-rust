@@ -75,7 +75,7 @@ jobs:
           if [[ "$TEMPLATE" == "postgres" ]]; then
             network="primarykit-ci-$GITHUB_RUN_ID"
             docker network create "$network"
-            db_id="$(docker run --detach --network "$network" \
+            db_id="$(docker run --detach --name primarykit-ci-db --network "$network" \
               -e POSTGRES_USER=primarykit -e POSTGRES_PASSWORD=primarykit_dev_only \
               -e POSTGRES_DB=primarykit_ci postgres:16-alpine)"
             for attempt in {1..30}; do
@@ -87,7 +87,6 @@ jobs:
             docker exec "$db_id" pg_isready -U primarykit -d primarykit_ci
             options+=(--network "$network" \
               -e DATABASE_URL=postgres://primarykit:primarykit_dev_only@primarykit-ci-db:5432/primarykit_ci)
-            docker network connect --alias primarykit-ci-db "$network" "$db_id" || true
           fi
 
           app_id="$(docker run --detach --publish 127.0.0.1::8000 \
