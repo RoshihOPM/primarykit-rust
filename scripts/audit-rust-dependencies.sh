@@ -22,16 +22,8 @@ audit_lockfile() {
     cargo audit --file "$lockfile"
 }
 
-echo "Verifying committed Cargo.lock against the generator manifest"
-# Temporary diagnostic: print the canonical lockfile so the repository can be fixed.
-cargo generate-lockfile
-if ! git diff --quiet -- Cargo.lock; then
-    echo "PRIMARYKIT_GENERATED_LOCK_BEGIN"
-    cat Cargo.lock
-    echo "PRIMARYKIT_GENERATED_LOCK_END"
-    echo "The committed generator Cargo.lock must be refreshed before a locked build" >&2
-    exit 1
-fi
+echo "Verifying generator lockfile is current without modifying it"
+cargo metadata --locked --no-deps --format-version=1 >/dev/null
 
 echo "Auditing PrimaryKit generator workspace"
 audit_lockfile "$repository_root/Cargo.lock"
