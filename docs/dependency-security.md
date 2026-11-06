@@ -75,10 +75,12 @@ only once it is consistently green (issue #19).
    dependency tree (for example, RustSec `cargo audit`) before release and
    after security advisories. Review and triage results; a passing compilation
    or Dependabot PR is **not** a security audit.
-4. Pin base container images by digest for reproducible deployment, scan the
-   final images, and publish the exact source revision and lockfile used.
-   Registry signatures, image scans and provenance attestations are **not**
-   currently guaranteed by PrimaryKit and must be provided by deployment CI.
+4. Generator Dockerfiles pin their base image digests and CI scans final
+   images, archiving short-lived CycloneDX SBOM and source/lockfile/image-ID
+   evidence. For deployment, review base digest updates, scan the *actual*
+   final application images and publish the source revision and lockfile.
+   Registry signatures and verifiable release provenance attestations are
+   **not** currently guaranteed and must be provided by deployment CI.
 
 Do not treat this policy as completion of production security controls.
 Issue #19 tracks mandatory branch status checks; issue #4 tracks security,

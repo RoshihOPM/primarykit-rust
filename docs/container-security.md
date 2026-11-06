@@ -17,6 +17,14 @@ libraries. There are no vulnerability ignore lists and scan errors fail the
 check. The workflow runs for PRs, both mainline branches, on Monday, and on
 manual dispatch. It has read-only GitHub permissions; no images are pushed.
 
+Each successful container job generates and archives a CycloneDX JSON SBOM,
+the tested source Git SHA, the generated application's Cargo.lock SHA-256,
+its Dockerfile SHA-256, both pinned base image references, and the local image
+ID. GitHub Actions artifacts are retained for 14 days. The local Docker
+image ID is **not** a registry manifest digest, and these text/SBOM artifacts
+are **not signed build provenance or SLSA attestations**. A deployment must
+record and verify the published image digest independently.
+
 Both templates build with the official Rust Alpine/musl toolchain and ship
 the resulting statically linked binary on Debian 13 Distroless `static`.
 This runtime has no shell, package manager or glibc and provides CA trust
@@ -43,10 +51,14 @@ For each generated project:
    with `cargo build --locked --release`. Building without a lockfile or with
    a stale lockfile fails closed. Create or update it intentionally before
    building the container.
-3. Pin the Rust builder and final runtime base images to **reviewed digests**
-   in each deployed application's Dockerfile, not mutable tags. Keep digests
-   updated deliberately after an image scan. The starter template's base tags
-   are intentionally not presented as fully reproducible production pins.
+3. The starter Dockerfiles already pin the Rust builder and final runtime
+   bases by SHA-256 digest, verified from a successful image build and scan.
+   Review and update both digests deliberately when upstream images publish
+   security fixes, then rebuild and rescan **both** templates. A digest pin
+   stops silent base-image drift; it does not automatically apply security
+   updates. The Alpine build-stage `apk add` packages and fresh lockfile
+   resolution in the CI smoke projects are not hermetically pinned, so the
+   generator's image build is **not fully bit-for-bit reproducible**.
 4. Run the application's own RustSec audit, Trivy image scan and release
    tests for its precise source revision, feature set and target platform.
    Scan the deployed digest for the platform used by the cluster or VPS.
