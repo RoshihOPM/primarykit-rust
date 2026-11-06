@@ -89,13 +89,11 @@ jobs:
               -e DATABASE_URL=postgres://primarykit:primarykit_dev_only@primarykit-ci-db:5432/primarykit_ci)
           fi
 
-          app_id="$(docker run --detach --publish 127.0.0.1::8000 \
+          app_id="$(docker run --detach --publish 127.0.0.1:18000:8000 \
             "${options[@]}" "primarykit-runtime-$TEMPLATE:ci")"
-          port="$(docker port "$app_id" 8000/tcp | head -n 1 | awk -F: '{print $NF}')"
-          test -n "$port"
           ready=0
           for attempt in {1..40}; do
-            if curl --fail --silent "http://127.0.0.1:$port/health/ready" >/dev/null; then
+            if curl --fail --silent "http://127.0.0.1:18000/health/ready" >/dev/null; then
               ready=1
               break
             fi
